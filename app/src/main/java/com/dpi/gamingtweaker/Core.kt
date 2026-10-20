@@ -46,6 +46,10 @@ class Prefs(ctx: Context) {
         get() = sp.getString("refresh_restore", null)
         set(v) = sp.edit(commit = true) { putString("refresh_restore", v) }
 
+    var touchLevel: Int
+        get() = sp.getInt("touch_level", 0)
+        set(v) = sp.edit(commit = true) { putInt("touch_level", v) }
+
     /** คำสั่งคืนค่าแอนิเมชัน/long-press เดิม (null = Touch Boost ปิดอยู่) */
     var touchRestore: String?
         get() = sp.getString("touch_restore", null)
@@ -179,6 +183,7 @@ object Tweaks {
         "global" to "transition_animation_scale",
         "global" to "animator_duration_scale",
         "secure" to "long_press_timeout",
+        "secure" to "multi_press_timeout",
     )
 
     // ---------- อ่านค่า ----------
@@ -242,16 +247,20 @@ object Tweaks {
     suspend fun setPointerSpeed(v: Int) =
         Shell.exec("settings put system pointer_speed ${v.coerceIn(-7, 7)}")
 
-    suspend fun touchBoost(on: Boolean, p: Prefs): Shell.Result {
-        if (on) {
+    /** level: 0 = ปิด/คืนค่าเดิม, 1 = ไว (แอนิเมชัน 0.5x), 2 = ไวสุด (ปิดแอนิเมชัน) */
+    suspend fun touchBoost(level: Int, p: Prefs): Shell.Result {
+        if (level > 0) {
             if (p.touchRestore == null) {
                 p.touchRestore = snapshot(TOUCH_KEYS) ?: return Shell.Result(-1, "", "อ่านค่าเดิมไม่ได้")
             }
+            val anim = if (level >= 2) "0" else "0.5"
+            val multi = if (level >= 2) 200 else 300
             return Shell.exec(
-                "settings put global window_animation_scale 0.5; " +
-                    "settings put global transition_animation_scale 0.5; " +
-                    "settings put global animator_duration_scale 0.5; " +
-                    "settings put secure long_press_timeout 250"
+                "settings put global window_animation_scale $anim; " +
+                    "settings put global transition_animation_scale $anim; " +
+                    "settings put global animator_duration_scale $anim; " +
+                    "settings put secure long_press_timeout 250; " +
+                    "settings put secure multi_press_timeout $multi"
             )
         }
         val cmd = p.touchRestore ?: return OK
@@ -281,6 +290,7 @@ object Tweaks {
         val r = Shell.exec(cmd)
         if (r.ok) {
             p.touchRestore = null
+            p.touchLevel = 0
             p.refreshRestore = null
             p.inGameProfile = false
             p.preGameDpi = -1

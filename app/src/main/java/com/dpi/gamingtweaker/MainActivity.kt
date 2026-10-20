@@ -111,7 +111,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var gameDpi by mutableIntStateOf(prefs.gameDpi); private set
     var gamePackages by mutableStateOf(prefs.gamePackages.toList()); private set
     var pointerSpeed by mutableFloatStateOf(0f)
-    var touchBoost by mutableStateOf(prefs.touchRestore != null); private set
+    var touchLevel by mutableIntStateOf(if (prefs.touchRestore != null) prefs.touchLevel.coerceAtLeast(1) else 0); private set
     var lock90 by mutableStateOf(prefs.refreshRestore != null); private set
 
     val hasShell get() = mode != Shell.Mode.NONE
@@ -182,7 +182,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         timerJob?.cancel(); session = null
         viewModelScope.launch {
             val r = Tweaks.emergencyReset(prefs)
-            if (r.ok) { touchBoost = false; lock90 = false; pointerSpeed = 0f }
+            if (r.ok) { touchLevel = 0; lock90 = false; pointerSpeed = 0f }
             status = if (r.ok) "EMERGENCY RESET: คืนค่าโรงงานเรียบร้อย" else "รีเซ็ตล้มเหลว: ${r.err}"
         }
     }
@@ -202,8 +202,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         runTweak("Pointer speed = $v") { Tweaks.setPointerSpeed(v) }
     }
 
-    fun setTouchBoostOn(on: Boolean) =
-        runTweak("Touch Boost ${if (on) "ON" else "OFF"}", onOk = { touchBoost = on }) { Tweaks.touchBoost(on, prefs) }
+    fun setTouchLevel(level: Int) =
+        runTweak(
+            "Touch Boost ${listOf("OFF", "ไว", "ไวสุด")[level.coerceIn(0, 2)]}",
+            onOk = { touchLevel = level; prefs.touchLevel = level }
+        ) { Tweaks.touchBoost(level, prefs) }
 
     fun setLock90On(on: Boolean) =
         runTweak("Lock 90Hz ${if (on) "ON" else "OFF"}", onOk = { lock90 = on }) {
@@ -559,7 +562,24 @@ private fun OptimizerCard(vm: MainViewModel) {
             onValueChangeFinished = vm::commitPointerSpeed,
             valueRange = -7f..7f, steps = 13, enabled = vm.hasShell
         )
-        ToggleRow("Touch Boost", "แอนิเมชัน 0.5x + Long-press 250ms", vm.touchBoost, vm.hasShell) { vm.setTouchBoostOn(it) }
+        Text("Touch Boost: " + listOf("ปิด", "ไว", "ไวสุด")[vm.touchLevel], color = Color.White, fontWeight = FontWeight.SemiBold)
+        Text(
+            "ไว = แอนิเมชัน 0.5x | ไวสุด = ปิดแอนิเมชัน + แตะซ้ำไวขึ้น (ลด Long-press 250ms ทั้งสองระดับ)",
+            color = Color.Gray, fontSize = 11.sp
+        )
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("ปิด", "ไว", "ไวสุด").forEachIndexed { i, label ->
+                val sel = vm.touchLevel == i
+                Button(
+                    onClick = { vm.setTouchLevel(i) },
+                    enabled = vm.hasShell,
+                    modifier = Modifier.weight(1f),
+                    colors = if (sel) ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
+                    else ButtonDefaults.buttonColors(containerColor = TileDark, contentColor = Color.White)
+                ) { Text(label, fontWeight = FontWeight.Bold) }
+            }
+        }
+        Text("ไวขึ้นอีกด้วยการเพิ่ม Pointer Speed ด้านบน (ลองที่ 3-5 ก่อน)", color = Color.Gray, fontSize = 11.sp)
         ToggleRow("Lock 90Hz", "บังคับ min/peak refresh rate = 90Hz", vm.lock90, vm.hasShell) { vm.setLock90On(it) }
         ToggleRow("Floating FPS/Ping Overlay", "แสดงทับทุกแอป รวม split-screen", overlayOn, true) { on ->
             if (on && !Settings.canDrawOverlays(ctx)) {
