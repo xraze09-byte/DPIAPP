@@ -8,6 +8,6 @@
 
 ## ดาวน์โหลด APK (ไม่ต้องล็อกอิน)
 
-[DpiGamingTweaker-v1.2-debug.apk](https://github.com/xraze09-byte/DPIAPP/releases/download/v1.2-debug/DpiGamingTweaker-v1.2-debug.apk)
+[DpiGamingTweaker-v1.8-debug.apk](https://github.com/xraze09-byte/DPIAPP/releases/download/v1.8-debug/DpiGamingTweaker-v1.8-debug.apk)
 
 ทุกครั้งที่ push โค้ดใหม่ แท็บ **Actions** จะ build ให้อัตโนมัติ ไฟล์ล่าสุดอยู่ใน Artifacts ของ run นั้น
