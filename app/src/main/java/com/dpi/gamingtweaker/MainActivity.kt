@@ -182,7 +182,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         timerJob?.cancel(); session = null
         viewModelScope.launch {
             val r = Tweaks.emergencyReset(prefs)
-            if (r.ok) { touchLevel = 0; lock90 = false; pointerSpeed = 0f }
+            if (r.ok) {
+                touchLevel = 0; lock90 = false; pointerSpeed = 0f
+                // คืน DND/แจ้งเตือน/ความสว่างที่ Game Mode เปลี่ยนไว้ด้วย
+                val ap = AssistPrefs(ctx)
+                GameDetectorService.instance?.stopSession()
+                // ล้างสถานะ session เฉพาะเมื่อคืนค่าสำเร็จ ไม่งั้นปล่อยให้ detector ลองคืนซ้ำเอง
+                if (GameMode.exit(ap).ok) { ap.sessionActive = false; ap.sessionStart = 0L }
+            }
             status = if (r.ok) "EMERGENCY RESET: คืนค่าโรงงานเรียบร้อย" else "รีเซ็ตล้มเหลว: ${r.err}"
         }
     }
@@ -321,6 +328,8 @@ fun DpiApp(vm: MainViewModel, onRequestShizuku: () -> Unit) {
             ) { p, dpi -> vm.applyDisplay(dpi, null, "${p.name} ($dpi DPI)") }
             OptimizerCard(vm)
             AutoApplyCard(vm)
+            GameAssistCard(vm.hasShell)
+            HelpCenterCard(vm.mode, onRequestShizuku, vm::refreshShellMode)
             Spacer(Modifier.height(8.dp))
         }
     }

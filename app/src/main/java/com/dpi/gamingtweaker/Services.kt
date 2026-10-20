@@ -1,6 +1,5 @@
 package com.dpi.gamingtweaker
 
-import android.accessibilityservice.AccessibilityService
 import android.annotation.SuppressLint
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -20,14 +19,11 @@ import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.WindowManager
-import android.view.accessibility.AccessibilityEvent
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlin.math.roundToInt
 
 // ======================= FLOATING FPS / PING =======================
@@ -152,61 +148,6 @@ class OverlayService : Service() {
         scope.cancel()
         tv?.let { v -> runCatching { wm?.removeView(v) } }
         tv = null
-        super.onDestroy()
-    }
-}
-
-// ======================= AUTO-APPLY DETECTOR =======================
-class GameDetectorService : AccessibilityService() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val mutex = Mutex()
-    private lateinit var prefs: Prefs
-    private var pending: Job? = null
-
-    override fun onServiceConnected() {
-        super.onServiceConnected()
-        prefs = Prefs(this)
-        // ถ้าครั้งก่อน service ตายตอนอยู่ในเกม → ตรวจใหม่
-        if (prefs.inGameProfile) schedule(null, 1500)
-    }
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !::prefs.isInitialized) return
-        if (!prefs.autoApply && !prefs.inGameProfile) return
-        schedule(event.packageName?.toString(), 600)
-    }
-
-    private fun schedule(pkg: String?, delayMs: Long) {
-        pending?.cancel()
-        pending = scope.launch {
-            delay(delayMs) // debounce
-            withContext(NonCancellable) { mutex.withLock { evaluate(pkg) } }
-        }
-    }
-
-    private suspend fun evaluate(pkg: String?) {
-        val games = prefs.gamePackages
-        val resumed = Tweaks.resumedPackages()
-        val inGame = when {
-            resumed.isNotEmpty() -> resumed.any { it in games } // รองรับ split-screen
-            pkg != null && pkg in games -> true
-            else -> return
-        }
-        val active = prefs.inGameProfile
-        when {
-            inGame && !active && prefs.autoApply -> Tweaks.enterGameProfile(prefs)
-            !inGame && active -> Tweaks.exitGameProfile(prefs)
-        }
-    }
-
-    override fun onInterrupt() {}
-
-    override fun onDestroy() {
-        if (::prefs.isInitialized && prefs.inGameProfile) {
-            val p = prefs
-            CoroutineScope(Dispatchers.IO).launch { withTimeoutOrNull(5000) { Tweaks.exitGameProfile(p) } }
-        }
-        scope.cancel()
         super.onDestroy()
     }
 }
