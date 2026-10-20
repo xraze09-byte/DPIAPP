@@ -21,7 +21,7 @@ class Prefs(ctx: Context) {
     private val sp = ctx.applicationContext.getSharedPreferences("dpi_tweaker", Context.MODE_PRIVATE)
 
     var gameDpi: Int
-        get() = sp.getInt("game_dpi", 600)
+        get() = sp.getInt("game_dpi", 384) // 80% ของ 480 (ผู้ใช้ปรับได้ในแอป)
         set(v) = sp.edit { putInt("game_dpi", v) }
 
     var autoApply: Boolean

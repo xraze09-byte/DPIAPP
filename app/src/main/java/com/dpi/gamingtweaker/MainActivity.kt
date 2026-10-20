@@ -296,9 +296,10 @@ fun DpiApp(vm: MainViewModel, onRequestShizuku: () -> Unit) {
             Header(vm, onRequestShizuku)
             DashboardCard(vm.telemetry)
             DpiControllerCard(vm)
-            PresetsSection(enabled = vm.hasShell && vm.session == null && !vm.busy) { p ->
-                vm.applyDisplay(p.dpi, null, "${p.name} (${p.dpi} DPI)")
-            }
+            PresetsSection(
+                enabled = vm.hasShell && vm.session == null && !vm.busy,
+                factoryDpi = vm.telemetry.physicalDpi
+            ) { p, dpi -> vm.applyDisplay(dpi, null, "${p.name} ($dpi DPI)") }
             OptimizerCard(vm)
             AutoApplyCard(vm)
             Spacer(Modifier.height(8.dp))
@@ -458,30 +459,37 @@ private fun DpiControllerCard(vm: MainViewModel) {
     }
 }
 
-data class Preset(val name: String, val dpi: Int, val tag: String, val colors: List<Color>)
+/** shrinkPct = เล็กลงกี่ % จากค่าโรงงาน (DPI ต่ำ = UI เล็กลง, DPI สูง = UI ใหญ่ขึ้น) */
+data class Preset(val name: String, val shrinkPct: Int, val tag: String, val colors: List<Color>) {
+    fun dpiFor(factory: Int): Int =
+        (factory * (100 - shrinkPct) / 100f).roundToInt().coerceIn(MainViewModel.DPI_MIN, MainViewModel.DPI_MAX)
+}
 
 private val PRESETS = listOf(
-    Preset("FREE FIRE PRO", 600, "โปรไฟล์หลักสาย FF", listOf(Color(0xFFFF7A00), Color(0xFFFF1744))),
-    Preset("EXTREME MOVEMENT", 800, "ลากไวสุดขีด", listOf(Color(0xFF7C4DFF), Color(0xFFFF4081))),
-    Preset("COMPETITIVE", 520, "บาลานซ์ UI กับการเล็ง", listOf(Color(0xFF0091EA), Color(0xFF00E5FF))),
-    Preset("STABLE AIM", 460, "ใกล้ค่าโรงงาน", listOf(Color(0xFF00C853), Color(0xFF64DD17))),
+    Preset("เล็กลง 10%", 10, "เห็นเพิ่มนิดหน่อย", listOf(Color(0xFF00C853), Color(0xFF64DD17))),
+    Preset("เล็กลง 20%", 20, "แนะนำสำหรับเล่นเกม", listOf(Color(0xFFFF7A00), Color(0xFFFF1744))),
+    Preset("เล็กลง 30%", 30, "เห็นพื้นที่เยอะ", listOf(Color(0xFF0091EA), Color(0xFF00E5FF))),
+    Preset("เล็กลง 40%", 40, "เล็กมาก ตัวหนังสืออาจอ่านยาก", listOf(Color(0xFF7C4DFF), Color(0xFFFF4081))),
 )
 
 @Composable
-private fun PresetsSection(enabled: Boolean, onApply: (Preset) -> Unit) {
-    SectionCard("MACRO PRESETS", NeonPurple) {
+private fun PresetsSection(enabled: Boolean, factoryDpi: Int?, onApply: (Preset, Int) -> Unit) {
+    SectionCard("MACRO PRESETS (เทียบกับค่าโรงงาน ${factoryDpi ?: "--"})", NeonPurple) {
+        Text("DPI ต่ำลง = หน้าจอเล็กลง เห็นพื้นที่มากขึ้น", color = Color.Gray, fontSize = 11.sp)
         PRESETS.chunked(2).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { p ->
+                    val target = factoryDpi?.let { p.dpiFor(it) }
+                    val ok = enabled && target != null
                     Box(
                         Modifier.weight(1f).height(112.dp)
                             .clip(RoundedCornerShape(18.dp))
-                            .background(Brush.linearGradient(if (enabled) p.colors else listOf(Color.DarkGray, Color.Gray)))
-                            .clickable(enabled = enabled) { onApply(p) }
+                            .background(Brush.linearGradient(if (ok) p.colors else listOf(Color.DarkGray, Color.Gray)))
+                            .clickable(enabled = ok) { target?.let { onApply(p, it) } }
                             .padding(14.dp)
                     ) {
                         Column(Modifier.align(Alignment.BottomStart)) {
-                            Text("${p.dpi}", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            Text(target?.toString() ?: "--", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White)
                             Text(p.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             Text(p.tag, fontSize = 11.sp, color = Color.White.copy(alpha = .8f))
                         }
