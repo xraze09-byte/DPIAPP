@@ -248,8 +248,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun saveGameProfile(dpiText: String, pkgText: String) {
-        val d = parseDpi(dpiText) ?: run { status = "DPI เกมต้องอยู่ระหว่าง $DPI_MIN–$DPI_MAX"; return }
+    fun saveGameProfile(scaleText: String, pkgText: String) {
+        val factory = telemetry.physicalDpi ?: run { status = "ยังอ่านค่าโรงงานไม่ได้ เชื่อม Shizuku/Root ก่อน"; return }
+        val sc = parseScale(scaleText) ?: run { status = "Scale เกมต้องอยู่ระหว่าง $SCALE_MIN–$SCALE_MAX"; return }
+        val d = scaleToDpi(sc, factory)
         val pk = pkgText.split(',', ' ', '\n').map { it.trim() }.filter { Tweaks.PKG_RE.matches(it) }.toSet()
         if (pk.isEmpty()) { status = "ไม่มี package name ที่ถูกต้อง"; return }
         prefs.gameDpi = d; prefs.gamePackages = pk
@@ -264,6 +266,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         private val SIZE_RE = Regex("""(\d{3,4})x(\d{3,4})""")
 
         fun parseDpi(t: String): Int? = t.trim().toIntOrNull()?.takeIf { it in DPI_MIN..DPI_MAX }
+
+        // Scale กลับด้านกับ DPI: Scale สูง = UI เล็ก, Scale ต่ำ = UI ใหญ่ (Scale 100 = ค่าโรงงาน)
+        const val SCALE_MIN = 40
+        const val SCALE_MAX = 250
+        fun dpiToScale(dpi: Int, factory: Int): Int = (factory * 100f / dpi).roundToInt()
+        fun scaleToDpi(scale: Int, factory: Int): Int =
+            (factory * 100f / scale).roundToInt().coerceIn(DPI_MIN, DPI_MAX)
+        fun parseScale(t: String): Int? = t.trim().toIntOrNull()?.takeIf { it in SCALE_MIN..SCALE_MAX }
         fun parseSize(t: String): String? {
             val m = SIZE_RE.matchEntire(t.trim().lowercase()) ?: return null
             val (w, h) = m.destructured
@@ -368,7 +378,11 @@ private fun DashboardCard(t: Metrics.Telemetry) {
         val rowMod = Modifier.fillMaxWidth()
         val gap = Arrangement.spacedBy(10.dp)
         Row(rowMod, gap) {
-            StatTile("Active DPI", t.activeDpi?.toString() ?: "--", t.physicalDpi?.let { "Factory $it" }, NeonOrange)
+            StatTile(
+                "Scale (สูง=เล็ก)",
+                if (t.activeDpi != null && t.physicalDpi != null) MainViewModel.dpiToScale(t.activeDpi, t.physicalDpi).toString() else "--",
+                "DPI ${t.activeDpi ?: "--"} / โรงงาน ${t.physicalDpi ?: "--"}", NeonOrange
+            )
             StatTile("Resolution", t.resolution, t.physicalRes?.let { "Native $it" })
         }
         Row(rowMod, gap) {
@@ -400,37 +414,50 @@ private fun DashboardCard(t: Metrics.Telemetry) {
 
 @Composable
 private fun DpiControllerCard(vm: MainViewModel) {
-    var dpiText by rememberSaveable { mutableStateOf("") }
+    var scaleText by rememberSaveable { mutableStateOf("") }
     var sizeText by rememberSaveable { mutableStateOf("") }
     val active = vm.telemetry.activeDpi
-    LaunchedEffect(active) { if (dpiText.isBlank() && active != null) dpiText = active.toString() }
+    val factory = vm.telemetry.physicalDpi
+    val curScale = if (active != null && factory != null) MainViewModel.dpiToScale(active, factory) else null
+    LaunchedEffect(curScale) { if (scaleText.isBlank() && curScale != null) scaleText = curScale.toString() }
 
-    val dpiVal = MainViewModel.parseDpi(dpiText)
+    val scaleVal = MainViewModel.parseScale(scaleText)
     val sizeVal = MainViewModel.parseSize(sizeText)
-    val dpiErr = dpiText.isNotBlank() && dpiVal == null
+    val scaleErr = scaleText.isNotBlank() && scaleVal == null
     val sizeErr = sizeText.isNotBlank() && sizeVal == null
+    val targetDpi = if (scaleVal != null && factory != null) MainViewModel.scaleToDpi(scaleVal, factory) else null
 
-    SectionCard("DPI & RESOLUTION CONTROLLER") {
+    SectionCard("SCALE & RESOLUTION CONTROLLER") {
+        Text("ตัวเลขสูง = หน้าจอเล็ก (เห็นพื้นที่เยอะ)  |  ตัวเลขต่ำ = หน้าจอใหญ่", color = Color.Gray, fontSize = 11.sp)
         OutlinedTextField(
-            value = dpiText,
-            onValueChange = { dpiText = it.filter(Char::isDigit).take(4) },
-            label = { Text("Custom DPI (${MainViewModel.DPI_MIN}–${MainViewModel.DPI_MAX})") },
-            isError = dpiErr,
+            value = scaleText,
+            onValueChange = { scaleText = it.filter(Char::isDigit).take(3) },
+            label = { Text("Scale (${MainViewModel.SCALE_MIN}–${MainViewModel.SCALE_MAX}, 100 = ค่าโรงงาน)") },
+            isError = scaleErr,
+            supportingText = {
+                Text(
+                    when {
+                        factory == null -> "เชื่อม Shizuku/Root เพื่ออ่านค่าโรงงาน"
+                        targetDpi != null -> "= DPI จริง $targetDpi (โรงงาน $factory, ตอนนี้ ${active ?: "--"})"
+                        else -> "ใส่ตัวเลข ${MainViewModel.SCALE_MIN}–${MainViewModel.SCALE_MAX}"
+                    }
+                )
+            },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth()
         )
         Slider(
-            value = (dpiVal ?: active ?: 420).toFloat().coerceIn(200f, 1000f),
-            onValueChange = { dpiText = it.roundToInt().toString() },
-            valueRange = 200f..1000f
+            value = (scaleVal ?: curScale ?: 100).toFloat().coerceIn(60f, 200f),
+            onValueChange = { scaleText = it.roundToInt().toString() },
+            valueRange = 60f..200f
         )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf(-10, -1, 1, 10).forEach { d ->
                 OutlinedButton(
                     onClick = {
-                        val base = dpiVal ?: active ?: 420
-                        dpiText = (base + d).coerceIn(MainViewModel.DPI_MIN, MainViewModel.DPI_MAX).toString()
+                        val base = scaleVal ?: curScale ?: 100
+                        scaleText = (base + d).coerceIn(MainViewModel.SCALE_MIN, MainViewModel.SCALE_MAX).toString()
                     },
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(0.dp)
@@ -447,12 +474,12 @@ private fun DpiControllerCard(vm: MainViewModel) {
         )
         Button(
             onClick = {
-                val newDpi = dpiVal?.takeIf { it != active }
-                val label = listOfNotNull(newDpi?.let { "$it DPI" }, sizeVal).joinToString(" + ")
+                val newDpi = targetDpi?.takeIf { it != active }
+                val label = listOfNotNull(scaleVal?.let { "Scale $it (${newDpi ?: active} DPI)" }, sizeVal).joinToString(" + ")
                 vm.applyDisplay(newDpi, sizeVal, label)
             },
-            enabled = vm.hasShell && vm.session == null && !vm.busy &&
-                !dpiErr && !sizeErr && (dpiVal != null || sizeVal != null),
+            enabled = vm.hasShell && vm.session == null && !vm.busy && !scaleErr && !sizeErr &&
+                ((targetDpi != null && targetDpi != active) || sizeVal != null),
             modifier = Modifier.fillMaxWidth().height(56.dp),
             shape = RoundedCornerShape(14.dp)
         ) { Text("APPLY  (Fail-Safe ${MainViewModel.FAILSAFE_SEC}s)", fontWeight = FontWeight.Bold) }
@@ -475,7 +502,7 @@ private val PRESETS = listOf(
 @Composable
 private fun PresetsSection(enabled: Boolean, factoryDpi: Int?, onApply: (Preset, Int) -> Unit) {
     SectionCard("MACRO PRESETS (เทียบกับค่าโรงงาน ${factoryDpi ?: "--"})", NeonPurple) {
-        Text("DPI ต่ำลง = หน้าจอเล็กลง เห็นพื้นที่มากขึ้น", color = Color.Gray, fontSize = 11.sp)
+        Text("ตัวเลขใหญ่บนปุ่ม = Scale (สูง = เล็ก) ส่วน DPI จริงอยู่บรรทัดล่าง", color = Color.Gray, fontSize = 11.sp)
         PRESETS.chunked(2).forEach { row ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 row.forEach { p ->
@@ -489,9 +516,9 @@ private fun PresetsSection(enabled: Boolean, factoryDpi: Int?, onApply: (Preset,
                             .padding(14.dp)
                     ) {
                         Column(Modifier.align(Alignment.BottomStart)) {
-                            Text(target?.toString() ?: "--", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            Text(factoryDpi?.let { f -> target?.let { MainViewModel.dpiToScale(it, f).toString() } } ?: "--", fontSize = 34.sp, fontWeight = FontWeight.Black, color = Color.White)
                             Text(p.name, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text(p.tag, fontSize = 11.sp, color = Color.White.copy(alpha = .8f))
+                            Text("${p.tag} · DPI ${target ?: "--"}", fontSize = 11.sp, color = Color.White.copy(alpha = .8f))
                         }
                     }
                 }
@@ -551,7 +578,9 @@ private fun OptimizerCard(vm: MainViewModel) {
 private fun AutoApplyCard(vm: MainViewModel) {
     val ctx = LocalContext.current
     val a11yOn = remember(vm.telemetry) { isA11yEnabled(ctx) }
-    var dpiText by rememberSaveable { mutableStateOf(vm.gameDpi.toString()) }
+    val factoryDpi = vm.telemetry.physicalDpi
+    val gameScale = factoryDpi?.let { MainViewModel.dpiToScale(vm.gameDpi, it) }
+    var dpiText by rememberSaveable(gameScale) { mutableStateOf(gameScale?.toString() ?: "125") }
     var pkgText by rememberSaveable { mutableStateOf(vm.gamePackages.joinToString(", ")) }
 
     SectionCard("AUTO-APPLY PROFILE", NeonCyan) {
@@ -577,12 +606,16 @@ private fun AutoApplyCard(vm: MainViewModel) {
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = NeonOrange, contentColor = Color.Black)
-            ) { Text("เปิดเกม @ ${vm.gameDpi} DPI\n$pkg", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
+            ) { Text("เปิดเกม @ Scale ${gameScale ?: "--"} (DPI ${vm.gameDpi})\n$pkg", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
         }
         OutlinedTextField(
             value = dpiText,
             onValueChange = { dpiText = it.filter(Char::isDigit).take(4) },
-            label = { Text("DPI ขณะเล่นเกม") },
+            label = { Text("Scale ขณะเล่นเกม (สูง = เล็ก)") },
+            supportingText = {
+                val sc = MainViewModel.parseScale(dpiText)
+                Text(if (sc != null && factoryDpi != null) "= DPI จริง ${MainViewModel.scaleToDpi(sc, factoryDpi)}" else "เช่น 125")
+            },
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth()
