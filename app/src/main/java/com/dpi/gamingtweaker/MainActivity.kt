@@ -202,7 +202,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         runTweak("Pointer speed = $v") { Tweaks.setPointerSpeed(v) }
     }
 
-    fun setTouchLevel(level: Int) =
+    fun applyTouchLevel(level: Int) =
         runTweak(
             "Touch Boost ${listOf("OFF", "ไว", "ไวสุด")[level.coerceIn(0, 2)]}",
             onOk = { touchLevel = level; prefs.touchLevel = level }
@@ -571,7 +571,7 @@ private fun OptimizerCard(vm: MainViewModel) {
             listOf("ปิด", "ไว", "ไวสุด").forEachIndexed { i, label ->
                 val sel = vm.touchLevel == i
                 Button(
-                    onClick = { vm.setTouchLevel(i) },
+                    onClick = { vm.applyTouchLevel(i) },
                     enabled = vm.hasShell,
                     modifier = Modifier.weight(1f),
                     colors = if (sel) ButtonDefaults.buttonColors(containerColor = NeonGreen, contentColor = Color.Black)
