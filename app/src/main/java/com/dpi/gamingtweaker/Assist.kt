@@ -170,6 +170,17 @@ object GameMode {
 object Assist {
     data class Battery(val pct: Int, val tempC: Float?, val charging: Boolean)
 
+    /** แอปที่ไม่ควรนับเป็นเกม: ตัวเอง, หน้าจอหลัก (launcher), SystemUI, แป้นพิมพ์, ตั้งค่า */
+    fun isIgnorable(ctx: Context, pkg: String): Boolean {
+        if (pkg == ctx.packageName || pkg == "android" || pkg == "com.android.systemui") return true
+        if (pkg.contains("inputmethod") || pkg.contains("keyboard") || pkg == "com.android.settings") return true
+        val home = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+        val launcher = runCatching {
+            ctx.packageManager.resolveActivity(home, android.content.pm.PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+        }.getOrNull()
+        return pkg == launcher
+    }
+
     fun battery(ctx: Context): Battery {
         val i = runCatching { ctx.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) }.getOrNull()
             ?: return Battery(-1, null, false)
@@ -741,9 +752,11 @@ class GameDetectorService : AccessibilityService() {
     private suspend fun evaluate(pkg: String?) {
         val games = prefs.gamePackages
         val resumed = Tweaks.resumedPackages()
+        // โหมดทุกแอป: แอปใดก็ได้ที่ไม่ใช่ตัวเอง/launcher/SystemUI นับเป็นเกม
+        fun isGame(p: String) = p in games || (prefs.allApps && !Assist.isIgnorable(this, p))
         val game: String? = when {
-            resumed.isNotEmpty() -> resumed.firstOrNull { it in games }
-            pkg != null && pkg in games -> pkg
+            resumed.isNotEmpty() -> resumed.firstOrNull { isGame(it) }
+            pkg != null && isGame(pkg) -> pkg
             else -> return
         }
         val inGame = game != null

@@ -295,6 +295,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    var allApps by mutableStateOf(prefs.allApps); private set
+    fun setAllApps(on: Boolean) { prefs.allApps = on; allApps = on }
+
+    /** เพิ่มแอปที่อยู่หน้าจอตอนนี้เข้ารายชื่อเกม (สลับไปเกมแล้วเปิดแอปนี้กลับมากดไม่ได้ จึงนับถอยหลัง) */
+    fun addForegroundGame() {
+        viewModelScope.launch {
+            status = "สลับไปเปิดเกมภายใน 5 วินาที..."
+            delay(5000)
+            val pkg = withContext(Dispatchers.IO) { Tweaks.foregroundPackage(ctx.packageName) }
+            if (pkg == null || !Tweaks.PKG_RE.matches(pkg)) { status = "ไม่พบแอปที่เปิดอยู่ ลองใหม่และอยู่ในเกมให้ครบ 5 วินาที"; return@launch }
+            val pk = prefs.gamePackages + pkg
+            prefs.gamePackages = pk; gamePackages = pk.toList()
+            status = "เพิ่มเกม $pkg แล้ว (รวม ${pk.size} เกม)"
+        }
+    }
+
     fun saveGameProfile(scaleText: String, pkgText: String) {
         val factory = shortSidePx(telemetry.resolution) ?: run { status = "ยังอ่านความละเอียดจอไม่ได้ เชื่อม Shizuku/Root ก่อน"; return }
         val sc = parseScale(scaleText) ?: run { status = "ตัวเลขเกมต้องอยู่ระหว่าง $SCALE_MIN–$SCALE_MAX"; return }

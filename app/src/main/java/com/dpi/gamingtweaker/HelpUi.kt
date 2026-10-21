@@ -64,11 +64,14 @@ fun AssistScreen(vm: MainViewModel) {
     val runningMacro by MacroEngine.running.collectAsState()
     val g = game
 
+    var autoOn by remember { mutableStateOf(ap.enabled) }
     val (stColor, stText) = when {
         !vm.hasShell -> NeonRed to "ต้องเชื่อมต่อ Shizuku/Root ก่อน"
-        !live -> NeonRed to "Auto-Apply Service ยังไม่ทำงาน — เปิดได้ที่แท็บช่วยเหลือ"
+        !live -> NeonRed to "บริการ Accessibility ยังไม่ทำงาน เมนูจึงไม่ขึ้น: กด \"เปิดบริการ\" ด้านล่าง"
+        !autoOn -> NeonYellow to "ปิด \"ผู้ช่วยอัตโนมัติ\" อยู่ เมนูจะไม่ขึ้นเองตอนเข้าเกม (ใช้ปุ่มทดสอบได้)"
         g != null -> NeonGreen to "กำลังเล่น ${gameName(g)} — ผู้ช่วยทำงานอยู่"
-        else -> NeonCyan to "พร้อมแล้ว — ผู้ช่วยจะเริ่มเองเมื่อเปิดเกม"
+        vm.allApps -> NeonCyan to "พร้อมแล้ว — เมนูจะขึ้นกับทุกแอปที่เปิด"
+        else -> NeonCyan to "พร้อมแล้ว — เมนูขึ้นเฉพาะเกมในรายชื่อ (${vm.gamePackages.size} เกม) ถ้าเกมคุณไม่อยู่ ให้กดเพิ่มด้านล่าง"
     }
     Box(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
@@ -79,7 +82,12 @@ fun AssistScreen(vm: MainViewModel) {
             Text("GAME ASSIST", color = NeonYellow, fontWeight = FontWeight.Black, fontSize = 22.sp, letterSpacing = 2.sp)
             Text(stText, color = stColor, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             runningMacro?.let { Text("มาโครกำลังทำงาน: $it", color = NeonPurple, fontSize = 12.sp) }
-            PrefToggle("เปิดผู้ช่วยอัตโนมัติเมื่อเข้าเกม", "ทำงานกับทุกเกมในรายชื่อด้านล่าง", ap.enabled) { ap.enabled = it }
+            PrefToggle("เปิดผู้ช่วยอัตโนมัติเมื่อเข้าเกม", "ทำงานกับทุกเกมในรายชื่อด้านล่าง", ap.enabled) { ap.enabled = it; autoOn = it }
+            if (!live) {
+                OutlinedButton(onClick = {
+                    if (vm.hasShell) vm.enableA11y() else ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }, modifier = Modifier.fillMaxWidth()) { Text("เปิดบริการ Accessibility") }
+            }
         }
     }
 
@@ -180,6 +188,14 @@ private fun GameProfileCard(vm: MainViewModel) {
         OutlinedButton(onClick = { vm.saveGameProfile(dpiText, pkgText) }, modifier = Modifier.fillMaxWidth()) {
             Text("บันทึกโปรไฟล์เกม")
         }
+        OutlinedButton(
+            onClick = { vm.addForegroundGame() }, enabled = vm.hasShell,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("เพิ่มเกมที่เปิดอยู่ (กดแล้วสลับไปเปิดเกม รอ 5 วิ)") }
+        ToggleRow(
+            "ถือว่าทุกแอปเป็นเกม", "เมนูจะขึ้นกับทุกแอปที่เปิด (ยกเว้นหน้าจอหลัก/ระบบ/แอปนี้) ใช้เมื่อไม่อยากเพิ่มทีละเกม",
+            vm.allApps
+        ) { vm.setAllApps(it) }
     }
 }
 

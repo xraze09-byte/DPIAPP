@@ -32,6 +32,11 @@ class Prefs(ctx: Context) {
         get() = sp.getStringSet("game_pkgs", null)?.toSet() ?: DEFAULT_GAMES
         set(v) = sp.edit { putStringSet("game_pkgs", v) }
 
+    /** true = ถือว่าทุกแอปที่ไม่ใช่แอประบบ/ตัวเอง/launcher เป็นเกม (เมนูขึ้นกับทุกแอป) */
+    var allApps: Boolean
+        get() = sp.getBoolean("all_apps", false)
+        set(v) = sp.edit { putBoolean("all_apps", v) }
+
     // สถานะสำคัญ: commit = true เขียนลงดิสก์ทันที
     var preGameDpi: Int
         get() = sp.getInt("pre_game_dpi", -1)
@@ -327,6 +332,10 @@ object Tweaks {
         val r = Shell.exec("dumpsys activity activities | grep -E 'ResumedActivity' | grep -vi 'last'", 5)
         return RESUMED_RE.findAll(r.out).map { it.groupValues[1] }.toSet()
     }
+
+    /** แพ็กเกจที่อยู่หน้าจอตอนนี้ (ไม่นับแอปนี้เอง) */
+    suspend fun foregroundPackage(self: String): String? =
+        resumedPackages().firstOrNull { it != self }
 
     suspend fun enterGameProfile(p: Prefs): Shell.Result {
         if (!p.inGameProfile) {
