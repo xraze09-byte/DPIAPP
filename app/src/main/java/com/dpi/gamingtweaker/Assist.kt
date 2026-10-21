@@ -83,7 +83,7 @@ data class SessionRecord(
 class AssistPrefs(ctx: Context) {
     private val sp = ctx.applicationContext.getSharedPreferences("game_assist", Context.MODE_PRIVATE)
 
-    var enabled by BoolPref(sp, "enabled", false)
+    var enabled by BoolPref(sp, "enabled", true)
     var dnd by BoolPref(sp, "dnd", true)
     var noHeadsUp by BoolPref(sp, "no_heads_up", true)
     var lockBrightness by BoolPref(sp, "lock_brightness", false)
@@ -698,6 +698,8 @@ class GameDetectorService : AccessibilityService() {
         @Volatile var manualDpi = false
         val live = MutableStateFlow(false)
         val gameRunning = MutableStateFlow<String?>(null)
+        /** เหตุผลล่าสุดที่ตัดสินใจ เช่น "เห็นแอป com.x: ไม่อยู่ในรายชื่อเกม" ไว้แสดงในแอป */
+        val lastDecision = MutableStateFlow("ยังไม่มีอีเวนต์จาก Accessibility (ลองสลับไปเปิดแอปอื่นแล้วกลับ)")
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -709,6 +711,7 @@ class GameDetectorService : AccessibilityService() {
     private var pending: Job? = null
     @Volatile private var sessionJob: Job? = null
     @Volatile private var userClosed = false
+    @Volatile private var lastEventPkg: String? = null
 
     private val autoClicker by lazy { AutoClickerTarget(this, getSystemService(WINDOW_SERVICE) as WindowManager, ap, this) }
 
@@ -737,8 +740,15 @@ class GameDetectorService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || !::prefs.isInitialized) return
-        if (!prefs.autoApply && !prefs.inGameProfile && !ap.enabled && !ap.sessionActive) return
-        schedule(event.packageName?.toString(), 600)
+        val p = event.packageName?.toString() ?: return
+        // อีเวนต์จากหน้าต่างของระบบ/คีย์บอร์ด/ตัวเราเอง ไม่ใช่การสลับแอป ข้ามไป
+        if (p == packageName || p == "com.android.systemui" || p.contains("inputmethod")) return
+        lastEventPkg = p
+        if (!prefs.autoApply && !prefs.inGameProfile && !ap.enabled && !ap.sessionActive) {
+            lastDecision.value = "เห็นแอป $p แต่ปิดผู้ช่วยอัตโนมัติอยู่"
+            return
+        }
+        schedule(p, 400)
     }
 
     private fun schedule(pkg: String?, delayMs: Long) {
@@ -751,20 +761,35 @@ class GameDetectorService : AccessibilityService() {
 
     private suspend fun evaluate(pkg: String?) {
         val games = prefs.gamePackages
-        val resumed = Tweaks.resumedPackages()
+        val resumed = runCatching { Tweaks.resumedPackages() }.getOrDefault(emptySet())
         // โหมดทุกแอป: แอปใดก็ได้ที่ไม่ใช่ตัวเอง/launcher/SystemUI นับเป็นเกม
         fun isGame(p: String) = p in games || (prefs.allApps && !Assist.isIgnorable(this, p))
+        val seen = pkg ?: lastEventPkg
+        // ถ้า dumpsys ใช้ไม่ได้ (Shizuku ยังไม่พร้อม) ใช้แพ็กเกจจากอีเวนต์แทน เมนูจะได้ขึ้นอยู่ดี
         val game: String? = when {
             resumed.isNotEmpty() -> resumed.firstOrNull { isGame(it) }
-            pkg != null && isGame(pkg) -> pkg
+            seen != null && isGame(seen) -> seen
+            seen != null -> null
             else -> return
         }
         val inGame = game != null
         gameRunning.value = game
+        lastDecision.value = when {
+            inGame -> "เจอเกม $game → เปิดเมนู"
+            seen != null -> "เห็นแอป $seen: ไม่อยู่ในรายชื่อเกม (กด \"เพิ่มเกมที่เปิดอยู่\" หรือเปิดโหมดทุกแอป)"
+            else -> "ไม่รู้ว่าแอปไหนอยู่หน้าจอ"
+        }
 
-        when {
-            inGame && !prefs.inGameProfile && prefs.autoApply && !manualDpi -> Tweaks.enterGameProfile(prefs)
-            !inGame && prefs.inGameProfile -> Tweaks.exitGameProfile(prefs)
+        // เมนูต้องขึ้นก่อนเสมอ งานที่ต้องใช้ Shizuku (DPI, DND, มาโคร) ทำทีหลังและห้ามทำให้เมนูไม่ขึ้น
+        if (inGame && ap.enabled && !userClosed && sessionJob?.isActive != true) {
+            startSession(game, forceToolbox = false)
+        }
+
+        runCatching {
+            when {
+                inGame && !prefs.inGameProfile && prefs.autoApply && !manualDpi -> Tweaks.enterGameProfile(prefs)
+                !inGame && prefs.inGameProfile -> Tweaks.exitGameProfile(prefs)
+            }
         }
         if (!inGame) manualDpi = false
 
@@ -772,19 +797,21 @@ class GameDetectorService : AccessibilityService() {
             inGame && ap.enabled && !ap.sessionActive -> {
                 ap.sessionActive = true
                 userClosed = false
-                if (ap.boostOnStart) Tweaks.boostRam(games + packageName)
-                GameMode.enter(ap, game)
-                macros.find(ap.startMacroId)?.let { MacroEngine.run(this, it) }
+                runCatching {
+                    if (ap.boostOnStart) Tweaks.boostRam(games + packageName)
+                    GameMode.enter(ap, game)
+                    macros.find(ap.startMacroId)?.let { MacroEngine.run(this, it) }
+                }
                 startSession(game, forceToolbox = false)
             }
             inGame && ap.enabled && ap.sessionActive && !userClosed && sessionJob?.isActive != true ->
                 startSession(game, forceToolbox = false)
             !inGame && ap.sessionActive -> {
                 stopSession()
-                GameMode.exit(ap)
+                runCatching { GameMode.exit(ap) }
                 ap.sessionActive = false
                 userClosed = false
-                macros.find(ap.exitMacroId)?.let { MacroEngine.run(this, it) }
+                runCatching { macros.find(ap.exitMacroId)?.let { MacroEngine.run(this, it) } }
             }
         }
     }

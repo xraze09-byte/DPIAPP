@@ -63,6 +63,7 @@ fun AssistScreen(vm: MainViewModel) {
     val game by GameDetectorService.gameRunning.collectAsState()
     val runningMacro by MacroEngine.running.collectAsState()
     val g = game
+    val decision by GameDetectorService.lastDecision.collectAsState()
 
     var autoOn by remember { mutableStateOf(ap.enabled) }
     val (stColor, stText) = when {
@@ -81,6 +82,7 @@ fun AssistScreen(vm: MainViewModel) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("GAME ASSIST", color = NeonYellow, fontWeight = FontWeight.Black, fontSize = 22.sp, letterSpacing = 2.sp)
             Text(stText, color = stColor, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            Text("ล่าสุด: $decision", color = Color.Gray, fontSize = 11.sp)
             runningMacro?.let { Text("มาโครกำลังทำงาน: $it", color = NeonPurple, fontSize = 12.sp) }
             PrefToggle("เปิดผู้ช่วยอัตโนมัติเมื่อเข้าเกม", "ทำงานกับทุกเกมในรายชื่อด้านล่าง", ap.enabled) { ap.enabled = it; autoOn = it }
             if (!live) {
