@@ -136,6 +136,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteMacro(id: String) {
         macros = macros.filter { it.id != id }
         macroStore.save(macros)
+        // ล้างการผูก "เมื่อเข้า/ออกเกม" ที่ชี้มาโครนี้ ไม่ให้ค้างอ้างของที่ไม่มีแล้ว
+        val ap = AssistPrefs(ctx)
+        if (ap.startMacroId == id) ap.startMacroId = null
+        if (ap.exitMacroId == id) ap.exitMacroId = null
     }
 
     fun togglePin(id: String) {

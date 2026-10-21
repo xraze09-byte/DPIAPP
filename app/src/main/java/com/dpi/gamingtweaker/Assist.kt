@@ -774,6 +774,7 @@ class GameDetectorService : AccessibilityService() {
         }
         val inGame = game != null
         gameRunning.value = game
+        if (game != null) prefs.lastGame = game
         lastDecision.value = when {
             inGame -> "เจอเกม $game → เปิดเมนู"
             seen != null -> "เห็นแอป $seen: ไม่อยู่ในรายชื่อเกม (กด \"เพิ่มเกมที่เปิดอยู่\" หรือเปิดโหมดทุกแอป)"
@@ -797,12 +798,18 @@ class GameDetectorService : AccessibilityService() {
             inGame && ap.enabled && !ap.sessionActive -> {
                 ap.sessionActive = true
                 userClosed = false
-                runCatching {
-                    if (ap.boostOnStart) Tweaks.boostRam(games + packageName)
-                    GameMode.enter(ap, game)
-                    macros.find(ap.startMacroId)?.let { MacroEngine.run(this, it) }
-                }
                 startSession(game, forceToolbox = false)
+                // งานเสริมแต่ละอย่างแยกกัน อันไหนล้มไม่กระทบอันอื่น และไม่กระทบการเปิดเมนู
+                if (ap.boostOnStart) runCatching { Tweaks.boostRam(games + packageName) }
+                runCatching { GameMode.enter(ap, game) }
+                // มาโครรันแยก coroutine: ช้า/ล้ม/ไม่มีมาโครก็ไม่หน่วงหรือหยุดสิ่งอื่น
+                // และไม่เปิดเกมอื่นแทนเกมที่ผู้ใช้กำลังเล่น (ข้ามถ้าไม่ได้เลือกมาโคร)
+                val startId = ap.startMacroId
+                if (startId != null) scope.launch {
+                    val m = macros.find(startId)
+                    if (m == null) ap.startMacroId = null   // มาโครถูกลบแล้ว ล้างการอ้างอิงค้าง
+                    else runCatching { MacroEngine.run(this@GameDetectorService, m) }
+                }
             }
             inGame && ap.enabled && ap.sessionActive && !userClosed && sessionJob?.isActive != true ->
                 startSession(game, forceToolbox = false)
@@ -811,7 +818,12 @@ class GameDetectorService : AccessibilityService() {
                 runCatching { GameMode.exit(ap) }
                 ap.sessionActive = false
                 userClosed = false
-                runCatching { macros.find(ap.exitMacroId)?.let { MacroEngine.run(this, it) } }
+                val exitId = ap.exitMacroId
+                if (exitId != null) scope.launch {
+                    val m = macros.find(exitId)
+                    if (m == null) ap.exitMacroId = null
+                    else runCatching { MacroEngine.run(this@GameDetectorService, m) }
+                }
             }
         }
     }

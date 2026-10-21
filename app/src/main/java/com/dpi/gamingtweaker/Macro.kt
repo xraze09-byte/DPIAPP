@@ -20,15 +20,28 @@ data class Macro(val id: String, val name: String, val script: String, val pinne
 class MacroStore(ctx: Context) {
     private val sp = ctx.applicationContext.getSharedPreferences("macros", Context.MODE_PRIVATE)
 
+    /** แก้มาโครตัวอย่างรุ่นเก่าที่ฝัง Free Fire ปกติ (ทำให้เปิดผิดเมื่อเล่น MAX) ให้เปิดเกมล่าสุดแทน */
+    private fun migrate() {
+        if (sp.getBoolean("migrated_v24", false)) return
+        sp.edit { putBoolean("migrated_v24", true) }
+        val raw = sp.getString("list", null) ?: return
+        val fixed = raw.replace("launch com.dts.freefireth", "launch game")
+            .replace("เตรียมเข้า Free Fire", "เตรียมเข้าเกม")
+        if (fixed != raw) sp.edit { putString("list", fixed) }
+    }
+
     fun load(): List<Macro> {
-        val raw = sp.getString("list", null) ?: return DEFAULTS
+        migrate()
+        // ยังไม่เคยบันทึก = ครั้งแรกเท่านั้นที่ใช้ตัวอย่าง; ถ้าเคยบันทึก (แม้ว่างเปล่า) ให้เคารพตามนั้น
+        if (!sp.contains("list")) return DEFAULTS
+        val raw = sp.getString("list", null) ?: return emptyList()
         return runCatching {
             val arr = JSONArray(raw)
             List(arr.length()) { i ->
                 val o = arr.getJSONObject(i)
                 Macro(o.getString("id"), o.getString("name"), o.getString("script"), o.optBoolean("pinned", false))
             }
-        }.getOrDefault(DEFAULTS)
+        }.getOrDefault(emptyList())
     }
 
     fun save(list: List<Macro>) {
@@ -44,8 +57,8 @@ class MacroStore(ctx: Context) {
     companion object {
         val DEFAULTS = listOf(
             Macro(
-                "prep_ff", "เตรียมเข้า Free Fire",
-                "# เคลียร์แรม > ตั้งค่าเกม > เปิดเกม\nboost\ndnd on\ntouch on\nhz 90\ndpi game\nwait 500\nlaunch com.dts.freefireth"
+                "prep_ff", "เตรียมเข้าเกม",
+                "# เคลียร์แรม > ตั้งค่าเกม > เปิดเกมที่ตั้งไว้ในโปรไฟล์เกม\nboost\ndnd on\ntouch on\nhz 90\ndpi game\nwait 500\nlaunch game"
             ),
             Macro("after_game", "คืนค่าหลังเล่น", "dpi reset\ntouch off\nhz reset\ndnd off", pinned = true),
             Macro("cool", "โหมดเย็นเครื่อง", "hz 60\nboost\ntoast เปิดโหมดเย็นเครื่องแล้ว", pinned = true),
@@ -72,7 +85,7 @@ object MacroEngine {
         "headsup off" to "แจ้งเตือนเด้งบังจอ on/off",
         "rotate lock" to "ล็อกการหมุนจอ lock/auto",
         "boost" to "RAM Booster",
-        "launch com.dts.freefireth" to "เปิดแอปหรือเกม",
+        "launch game" to "เปิดเกมล่าสุดที่เล่น | launch com.ชื่อ.แพ็กเกจ = เปิดแอปที่ระบุ",
         "stop com.example.app" to "บังคับหยุดแอป",
         "wait 500" to "รอ (มิลลิวินาที)",
         "screenshot" to "ถ่ายภาพหน้าจอ",
@@ -106,7 +119,8 @@ object MacroEngine {
         "rotate" -> if (a == "lock" || a == "auto") null else "rotate ต้องเป็น lock หรือ auto"
         "pointer" -> if (intIn(a, -7..7)) null else "pointer ต้องเป็น -7 ถึง 7"
         "wait" -> if (intIn(a, 50..30000)) null else "wait ต้องเป็น 50–30000"
-        "launch", "stop" -> if (Tweaks.PKG_RE.matches(a)) null else "ชื่อ package ไม่ถูกต้อง"
+        "launch" -> if (a == "game" || Tweaks.PKG_RE.matches(a)) null else "launch ต้องเป็น game หรือชื่อ package"
+        "stop" -> if (Tweaks.PKG_RE.matches(a)) null else "ชื่อ package ไม่ถูกต้อง"
         "boost", "screenshot" -> if (a.isEmpty()) null else "$cmd ไม่ต้องมีค่าต่อท้าย"
         "toast" -> if (a.isNotEmpty() && a.length <= 80) null else "toast ต้องมีข้อความ 1–80 ตัวอักษร"
         else -> "ไม่รู้จักคำสั่ง '$cmd'"
@@ -150,8 +164,14 @@ object MacroEngine {
             "headsup" -> Shell.exec("settings put global heads_up_notifications_enabled ${if (a == "on") 1 else 0}")
             "rotate" -> Shell.exec("settings put system accelerometer_rotation ${if (a == "auto") 1 else 0}")
             "boost" -> Shell.Result(0, "${Tweaks.boostRam(p.gamePackages + ctx.packageName)} apps", "")
-            "launch" -> Shell.exec("monkey -p $a -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1")
-                .let { if (it.ok) it else it.copy(err = "ไม่พบแอป $a") }
+            "launch" -> {
+                // launch game = เกมที่ผู้ใช้เล่นล่าสุด (จำจากตอนเข้าเกมจริง) ไม่เดาเองจากรายชื่อ
+                val target = if (a == "game") p.lastGame else a
+                if (target == null || !Tweaks.PKG_RE.matches(target)) {
+                    Shell.Result(-1, "", "ยังไม่รู้ว่าเกมไหน: เปิดเกมที่ต้องการสักครั้งก่อน หรือใช้ launch com.ชื่อ.แพ็กเกจ")
+                } else Shell.exec("monkey -p $target -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1")
+                    .let { if (it.ok) it else it.copy(err = "ไม่พบแอป $target") }
+            }
             "stop" -> if (a == ctx.packageName) Shell.Result(-1, "", "หยุดแอปตัวเองไม่ได้") else Shell.exec("am force-stop $a")
             "wait" -> { delay(a.toLong()); OK }
             "screenshot" -> Tools.screenshot()

@@ -32,6 +32,11 @@ class Prefs(ctx: Context) {
         get() = sp.getStringSet("game_pkgs", null)?.toSet() ?: DEFAULT_GAMES
         set(v) = sp.edit { putStringSet("game_pkgs", v) }
 
+    /** เกมที่ตรวจพบว่าเข้าเล่นจริงล่าสุด ใช้กับคำสั่งมาโคร launch game */
+    var lastGame: String?
+        get() = sp.getString("last_game", null)
+        set(v) = sp.edit { if (v == null) remove("last_game") else putString("last_game", v) }
+
     /** true = ถือว่าทุกแอปที่ไม่ใช่แอประบบ/ตัวเอง/launcher เป็นเกม (เมนูขึ้นกับทุกแอป) */
     var allApps: Boolean
         get() = sp.getBoolean("all_apps", false)
