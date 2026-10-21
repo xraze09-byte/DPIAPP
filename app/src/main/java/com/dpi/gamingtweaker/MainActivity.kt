@@ -296,7 +296,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     var allApps by mutableStateOf(prefs.allApps); private set
-    fun setAllApps(on: Boolean) { prefs.allApps = on; allApps = on }
+    fun applyAllApps(on: Boolean) { prefs.allApps = on; allApps = on }
 
     /** เพิ่มแอปที่อยู่หน้าจอตอนนี้เข้ารายชื่อเกม (สลับไปเกมแล้วเปิดแอปนี้กลับมากดไม่ได้ จึงนับถอยหลัง) */
     fun addForegroundGame() {

@@ -195,7 +195,7 @@ private fun GameProfileCard(vm: MainViewModel) {
         ToggleRow(
             "ถือว่าทุกแอปเป็นเกม", "เมนูจะขึ้นกับทุกแอปที่เปิด (ยกเว้นหน้าจอหลัก/ระบบ/แอปนี้) ใช้เมื่อไม่อยากเพิ่มทีละเกม",
             vm.allApps
-        ) { vm.setAllApps(it) }
+        ) { vm.applyAllApps(it) }
     }
 }
 
