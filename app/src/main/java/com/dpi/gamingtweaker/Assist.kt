@@ -96,7 +96,7 @@ class AssistPrefs(ctx: Context) {
     var pingAlertMs by IntPref(sp, "ping_alert", 150)
     var breakMin by IntPref(sp, "break_min", 60)
     var batteryAlert by IntPref(sp, "battery_alert", 15)
-    var clickIntervalMs by IntPref(sp, "click_interval", 100)
+    var clickIntervalMs by IntPref(sp, "click_interval", 60)
     var startMacroId by StrPref(sp, "start_macro")
     var exitMacroId by StrPref(sp, "exit_macro")
     var tbX by IntPref(sp, "tb_x", 24)
@@ -251,6 +251,7 @@ class AutoClickerTarget(
     private fun dp(v: Int) = (v * unit).roundToInt()
 
     private var targetView: View? = null
+    private var targetParams: WindowManager.LayoutParams? = null
     var isRunning = false
         private set
     private var clickJob: Job? = null
@@ -303,12 +304,26 @@ class AutoClickerTarget(
 
         wm.addView(view, params)
         targetView = view
+        targetParams = params
+    }
+
+    /** ตอนรันให้เป้าไม่รับทัช เพื่อไม่ให้ดักนิ้วที่กำลังเล่นเกม ตอนหยุดค่อยให้ลากได้ */
+    private fun setTouchable(touchable: Boolean) {
+        val v = targetView ?: return
+        val p = targetParams ?: return
+        p.flags = if (touchable) {
+            p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        } else {
+            p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        }
+        runCatching { wm.updateViewLayout(v, p) }
     }
 
     fun hide() {
         stop()
         targetView?.let { runCatching { wm.removeView(it) } }
         targetView = null
+        targetParams = null
     }
 
     fun toggle(scope: CoroutineScope): Boolean {
@@ -324,14 +339,18 @@ class AutoClickerTarget(
             setColor(0x8800E676.toInt())
             setStroke(dp(3), 0xFFFFFFFF.toInt())
         }
+        setTouchable(false)
         clickJob = scope.launch(Dispatchers.Default) {
-            val sz = dp(52) / 2f
+            val half = dp(52) / 2f
             while (isActive) {
-                val tv = targetView ?: break
-                val cx = tv.x + sz
-                val cy = tv.y + sz
-                dispatchTap(cx, cy)
-                delay(ap.clickIntervalMs.toLong().coerceAtLeast(40L))
+                val p = targetParams ?: break
+                val cx = p.x + half
+                val cy = p.y + half
+                val t0 = SystemClock.uptimeMillis()
+                // รอให้ท่าแตะจบก่อนค่อยส่งท่าใหม่ ไม่งั้นระบบจะยกเลิกท่าเก่าทิ้งจนสะดุด
+                awaitTap(cx, cy)
+                val spent = SystemClock.uptimeMillis() - t0
+                delay((ap.clickIntervalMs - spent).coerceAtLeast(5L))
             }
         }
     }
@@ -340,6 +359,7 @@ class AutoClickerTarget(
         isRunning = false
         clickJob?.cancel()
         clickJob = null
+        setTouchable(true)
         targetView?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(0x88FF1744.toInt())
@@ -347,12 +367,22 @@ class AutoClickerTarget(
         }
     }
 
-    private fun dispatchTap(x: Float, y: Float) {
+    /** แตะสั้น 10ms แล้วรอผลจากระบบ (สำเร็จ/ถูกยกเลิก) ค่อยกลับ */
+    private suspend fun awaitTap(x: Float, y: Float) {
         if (Build.VERSION.SDK_INT < 24) return
-        val path = Path().apply { moveTo(x, y) }
-        val stroke = GestureDescription.StrokeDescription(path, 0, 30) // คลิกค้าง 30ms
-        val desc = GestureDescription.Builder().addStroke(stroke).build()
-        service.dispatchGesture(desc, null, null)
+        val path = Path().apply { moveTo(x, y); lineTo(x, y) }
+        val desc = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0, 10))
+            .build()
+        withTimeoutOrNull(300L) {
+            suspendCancellableCoroutine<Unit> { cont ->
+                val ok = service.dispatchGesture(desc, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(g: GestureDescription?) { if (cont.isActive) cont.resume(Unit) {} }
+                    override fun onCancelled(g: GestureDescription?) { if (cont.isActive) cont.resume(Unit) {} }
+                }, null)
+                if (!ok && cont.isActive) cont.resume(Unit) {}
+            }
+        }
     }
 }
 
