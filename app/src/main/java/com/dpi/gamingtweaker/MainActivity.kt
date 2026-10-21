@@ -32,7 +32,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
@@ -223,7 +225,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val ap = AssistPrefs(ctx)
                 GameDetectorService.instance?.stopSession()
                 // ล้างสถานะ session เฉพาะเมื่อคืนค่าสำเร็จ ไม่งั้นปล่อยให้ detector ลองคืนซ้ำเอง
-                if (GameMode.exit(ap).ok) { ap.sessionActive = false; ap.sessionStart = 0L }
+                if (GameMode.exit(ap).ok) { ap.sessionActive = false }
             }
             status = if (r.ok) "EMERGENCY RESET: คืนค่าโรงงานเรียบร้อย" else "รีเซ็ตล้มเหลว: ${r.err}"
         }
@@ -600,7 +602,7 @@ private fun PresetsSection(enabled: Boolean, factoryDpi: Int?, widthPx: Int?, on
 }
 
 @Composable
-internal fun ToggleRow(title: String, sub: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(title: String, sub: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -783,4 +785,14 @@ internal fun Pill(text: String, selected: Boolean, color: Color = NeonOrange, on
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 7.dp)
     )
+}
+
+@Composable
+internal fun GradientButton(text: String, colors: List<Color>, enabled: Boolean = true, height: Dp = 56.dp, onClick: () -> Unit) {
+    Box(
+        Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(16.dp))
+            .background(Brush.horizontalGradient(if (enabled) colors else listOf(Color.DarkGray, Color.Gray)))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Text(text, color = Color.White, fontWeight = FontWeight.Black, fontSize = 15.sp, textAlign = TextAlign.Center) }
 }

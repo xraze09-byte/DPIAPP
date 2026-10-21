@@ -101,7 +101,8 @@ object MacroEngine {
         "dpi" -> if (a == "game" || a == "reset" || intIn(a, 120..1200)) null else "dpi ต้องเป็น 120–1200, game หรือ reset"
         "size" -> if (a == "reset" || MainViewModel.parseSize(a) != null) null else "size ต้องเป็นเช่น 1080x2400 หรือ reset"
         "hz" -> if (a == "reset" || intIn(a, 30..165)) null else "hz ต้องเป็น 30–165 หรือ reset"
-        "touch", "dnd", "headsup" -> if (a == "on" || a == "off") null else "$cmd ต้องตามด้วย on หรือ off"
+        "touch" -> if (a == "on" || a == "off" || a == "max") null else "touch ต้องตามด้วย on, max หรือ off"
+        "dnd", "headsup" -> if (a == "on" || a == "off") null else "$cmd ต้องตามด้วย on หรือ off"
         "rotate" -> if (a == "lock" || a == "auto") null else "rotate ต้องเป็น lock หรือ auto"
         "pointer" -> if (intIn(a, -7..7)) null else "pointer ต้องเป็น -7 ถึง 7"
         "wait" -> if (intIn(a, 50..30000)) null else "wait ต้องเป็น 50–30000"
@@ -143,7 +144,7 @@ object MacroEngine {
             }
             "size" -> Shell.exec(if (a == "reset") "wm size reset" else "wm size $a")
             "hz" -> Tweaks.lockRefreshRate(if (a == "reset") null else a.toInt(), p)
-            "touch" -> Tweaks.touchBoost(a == "on", p)
+            "touch" -> Tweaks.touchBoost(when (a) { "max" -> 2; "on" -> 1; else -> 0 }, p)
             "pointer" -> Tweaks.setPointerSpeed(a.toInt())
             "dnd" -> GameMode.setDnd(a == "on")
             "headsup" -> Shell.exec("settings put global heads_up_notifications_enabled ${if (a == "on") 1 else 0}")

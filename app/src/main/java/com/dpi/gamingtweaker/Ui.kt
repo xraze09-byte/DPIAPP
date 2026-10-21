@@ -41,7 +41,7 @@ internal fun GlassCard(
 @Composable
 internal fun IntSlider(
     label: String, value: Int, range: IntRange, step: Int, suffix: String,
-    offAtZero: Boolean = false, onChange: (Int) -> Unit
+    offAtZero: Boolean = false, enabled: Boolean = true, onChange: (Int) -> Unit
 ) {
     val shown = if (offAtZero && value == 0) "ปิด" else "$value$suffix"
     val steps = ((range.last - range.first) / step.coerceAtLeast(1) - 1).coerceAtLeast(0)
@@ -54,6 +54,7 @@ internal fun IntSlider(
                 onChange(snapped.coerceIn(range.first, range.last))
             },
             valueRange = range.first.toFloat()..range.last.toFloat(),
+            enabled = enabled,
             steps = steps
         )
     }
