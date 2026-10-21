@@ -48,13 +48,13 @@ import kotlin.math.roundToInt
 // ================= THEME =================
 private val BgDark = Color(0xFF0B0B12)
 private val CardDark = Color(0xFF161622)
-private val TileDark = Color(0xFF1E1E2C)
-private val NeonOrange = Color(0xFFFF7A00)
-private val NeonCyan = Color(0xFF00E5FF)
-private val NeonRed = Color(0xFFFF1744)
-private val NeonGreen = Color(0xFF00E676)
-private val NeonPurple = Color(0xFFB388FF)
-private val NeonYellow = Color(0xFFFFD600)
+internal val TileDark = Color(0xFF1E1E2C)
+internal val NeonOrange = Color(0xFFFF7A00)
+internal val NeonCyan = Color(0xFF00E5FF)
+internal val NeonRed = Color(0xFFFF1744)
+internal val NeonGreen = Color(0xFF00E676)
+internal val NeonPurple = Color(0xFFB388FF)
+internal val NeonYellow = Color(0xFFFFD600)
 private val GamingColors = darkColorScheme(
     primary = NeonOrange, secondary = NeonCyan, background = BgDark, surface = CardDark, error = NeonRed
 )
@@ -113,6 +113,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var pointerSpeed by mutableFloatStateOf(0f)
     var touchLevel by mutableIntStateOf(if (prefs.touchRestore != null) prefs.touchLevel.coerceAtLeast(1) else 0); private set
     var lock90 by mutableStateOf(prefs.refreshRestore != null); private set
+
+    private val macroStore = MacroStore(app)
+    var macros by mutableStateOf(macroStore.load()); private set
+    val macroLog = mutableStateListOf<String>()
+
+    /** HelpUi ใช้สวิตช์เปิด/ปิด; ของเรามี 3 ระดับ: เปิด = ระดับ "ไว" (1) */
+    val touchBoost: Boolean get() = touchLevel > 0
+    fun setTouchBoostOn(on: Boolean) = applyTouchLevel(if (on) 1 else 0)
+
+    fun saveMacro(m: Macro) {
+        val list = macros.toMutableList()
+        val i = list.indexOfFirst { it.id == m.id }
+        if (i >= 0) list[i] = m else list += m
+        macros = list
+        macroStore.save(list)
+        status = "บันทึกมาโคร ${m.name}"
+    }
+
+    fun deleteMacro(id: String) {
+        macros = macros.filter { it.id != id }
+        macroStore.save(macros)
+    }
+
+    fun togglePin(id: String) {
+        macros = macros.map { if (it.id == id) it.copy(pinned = !it.pinned) else it }
+        macroStore.save(macros)
+    }
+
+    fun runMacro(m: Macro) {
+        macroLog.clear()
+        viewModelScope.launch {
+            val ok = MacroEngine.run(ctx, m) { macroLog += it }
+            status = if (ok) "มาโคร ${m.name} เสร็จ" else "มาโคร ${m.name} มีข้อผิดพลาด"
+        }
+    }
 
     val hasShell get() = mode != Shell.Mode.NONE
     private var timerJob: Job? = null
@@ -308,29 +343,46 @@ fun DpiApp(vm: MainViewModel, onRequestShizuku: () -> Unit) {
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.telemetryLoop() }
     }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val tabs = listOf("หน้าหลัก", "ผู้ช่วย", "มาโคร")
 
     Scaffold(
         containerColor = BgDark,
         bottomBar = { EmergencyResetBar(vm.hasShell, vm.telemetry.physicalDpi, vm::emergencyReset) }
     ) { pad ->
-        Column(
-            Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Header(vm, onRequestShizuku)
-            DashboardCard(vm.telemetry)
-            DpiControllerCard(vm)
-            PresetsSection(
-                enabled = vm.hasShell && vm.session == null && !vm.busy,
-                factoryDpi = vm.telemetry.physicalDpi,
-                widthPx = MainViewModel.shortSidePx(vm.telemetry.resolution)
-            ) { p, dpi -> vm.applyDisplay(dpi, null, "${p.name} ($dpi DPI)") }
-            OptimizerCard(vm)
-            AutoApplyCard(vm)
-            GameAssistCard(vm.hasShell)
-            HelpCenterCard(vm.mode, onRequestShizuku, vm::refreshShellMode)
-            Spacer(Modifier.height(8.dp))
+        Column(Modifier.fillMaxSize().padding(pad)) {
+            TabRow(
+                selectedTabIndex = tab,
+                containerColor = BgDark,
+                contentColor = NeonCyan
+            ) {
+                tabs.forEachIndexed { i, t ->
+                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(t, fontWeight = FontWeight.Bold) })
+                }
+            }
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                when (tab) {
+                    0 -> {
+                        Header(vm, onRequestShizuku)
+                        DashboardCard(vm.telemetry)
+                        DpiControllerCard(vm)
+                        PresetsSection(
+                            enabled = vm.hasShell && vm.session == null && !vm.busy,
+                            factoryDpi = vm.telemetry.physicalDpi,
+                            widthPx = MainViewModel.shortSidePx(vm.telemetry.resolution)
+                        ) { p, dpi -> vm.applyDisplay(dpi, null, "${p.name} ($dpi DPI)") }
+                        OptimizerCard(vm)
+                        AutoApplyCard(vm)
+                    }
+                    1 -> AssistScreen(vm)
+                    else -> MacroScreen(vm)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
         }
     }
 
@@ -339,7 +391,7 @@ fun DpiApp(vm: MainViewModel, onRequestShizuku: () -> Unit) {
 
 // ================= COMPONENTS =================
 @Composable
-private fun SectionCard(title: String, accent: Color = NeonOrange, content: @Composable ColumnScope.() -> Unit) {
+internal fun SectionCard(title: String, accent: Color = NeonOrange, content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = CardDark),
         shape = RoundedCornerShape(20.dp),
@@ -548,7 +600,7 @@ private fun PresetsSection(enabled: Boolean, factoryDpi: Int?, widthPx: Int?, on
 }
 
 @Composable
-private fun ToggleRow(title: String, sub: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
+internal fun ToggleRow(title: String, sub: String, checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(title, color = Color.White, fontWeight = FontWeight.SemiBold)
@@ -711,5 +763,24 @@ private fun FailSafeDialog(label: String, seconds: Int, onConfirm: () -> Unit, o
             }
         },
         dismissButton = { OutlinedButton(onClick = onRevert) { Text("REVERT") } }
+    )
+}
+
+internal fun gameName(pkg: String): String = when (pkg) {
+    "com.dts.freefireth" -> "Free Fire"
+    "com.dts.freefiremax" -> "Free Fire MAX"
+    else -> pkg.substringAfterLast('.')
+}
+
+@Composable
+internal fun Pill(text: String, selected: Boolean, color: Color = NeonOrange, onClick: () -> Unit) {
+    Text(
+        text,
+        color = if (selected) Color.Black else Color.White,
+        fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.clip(RoundedCornerShape(50))
+            .background(if (selected) color else Color.White.copy(alpha = .1f))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 7.dp)
     )
 }

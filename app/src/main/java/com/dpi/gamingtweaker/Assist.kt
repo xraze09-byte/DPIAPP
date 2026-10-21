@@ -399,7 +399,7 @@ class Toolbox(
         setColor(color)
     }
 
-    private fun label(s: String, size: Float, color: Color = Color.WHITE, bold: Boolean = true) = TextView(ctx).apply {
+    private fun label(s: String, size: Float, color: Int = Color.WHITE, bold: Boolean = true) = TextView(ctx).apply {
         text = s
         setTextColor(color)
         setTextSize(TypedValue.COMPLEX_UNIT_PX, size * unit)
@@ -857,7 +857,7 @@ class GameDetectorService : AccessibilityService() {
                 else "${Assist.fmt(elapsed)} | $tempS | $batS"
                 val statsText = "เวลาเล่น ${Assist.fmt(elapsed)}\n" +
                     "FPS $fpsS  |  Ping $pingS (เฉลี่ย ${avgPing}ms)\n" +
-                    "แบต batS{if (bat.charging) " (ชาร์จ)" else ""}  |  $tempS"
+                    "แบต $batS${if (bat.charging) " (ชาร์จ)" else ""}  |  $tempS"
                 tb?.update(bubbleText, statsText, hot || low || lag)
                 delay(1000)
             }
@@ -905,7 +905,7 @@ class GameDetectorService : AccessibilityService() {
             }
         }
         scope.cancel()
-        uiScope.cancel()เปรียบเทียบ
+        uiScope.cancel()
         super.onDestroy()
     }
 
