@@ -235,10 +235,10 @@ object Assist {
         appendLine("Stable density: ${DisplayMetrics.DENSITY_DEVICE_STABLE}")
         val mode = ensureShell()
         appendLine("Backend: $mode")
-        appendLine("Overlay permission: ${Settings.canDrawOverlays(ctx)}")
+        appendLine("Overlay permission (ไม่จำเป็นสำหรับเมนู Accessibility): ${Settings.canDrawOverlays(ctx)}")
         appendLine("Accessibility: ${isA11yEnabled(ctx)} | service live: ${GameDetectorService.instance != null}")
         val ap = AssistPrefs(ctx)
-        appendLine("Assist: enabled=ap.enabledsession={ap.sessionActive} gameMode=${ap.restoreCmd != null}")
+        appendLine("Assist: enabled=${ap.enabled} session=${ap.sessionActive} gameMode=${ap.restoreCmd != null} clickMode=${if (ap.clickMode == 1) "HOLD" else "TAP"} panel=${GameDetectorService.instance?.clickPanelShown}")
         if (mode == Shell.Mode.NONE) {
             appendLine("ข้ามการทดสอบ shell (ไม่มี Shizuku/Root)")
             return@buildString
