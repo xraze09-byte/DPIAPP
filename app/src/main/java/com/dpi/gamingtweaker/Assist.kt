@@ -97,6 +97,7 @@ class AssistPrefs(ctx: Context) {
     var breakMin by IntPref(sp, "break_min", 60)
     var batteryAlert by IntPref(sp, "battery_alert", 15)
     var clickIntervalMs by IntPref(sp, "click_interval", 60)
+    var clickMode by IntPref(sp, "click_mode", 0)   // 0 = TAP รัวซ้ำ, 1 = HOLD กดค้าง
     var startMacroId by StrPref(sp, "start_macro")
     var exitMacroId by StrPref(sp, "exit_macro")
     var tbX by IntPref(sp, "tb_x", 24)
@@ -273,6 +274,7 @@ class AutoClickerTarget(
     var isRunning = false
         private set
     private var clickJob: Job? = null
+    private val MAX_RUN_MS = 10 * 60_000L   // หยุดเองเมื่อครบ 10 นาที
 
     val shown: Boolean get() = targetView != null
 
@@ -281,8 +283,10 @@ class AutoClickerTarget(
         if (targetView != null) return
         val sz = dp(52)
         val view = TextView(ctx).apply {
-            text = "🎯"
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, 22f * unit)
+            text = if (ap.clickMode == 1) "HOLD" else "TAP"
+            setTextColor(0xFFFFFFFF.toInt())
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextSize(TypedValue.COMPLEX_UNIT_PX, 12f * unit)
             gravity = Gravity.CENTER
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
@@ -360,16 +364,22 @@ class AutoClickerTarget(
         setTouchable(false)
         clickJob = scope.launch(Dispatchers.Default) {
             val half = dp(52) / 2f
-            while (isActive) {
+            val t0 = SystemClock.uptimeMillis()
+            while (isActive && SystemClock.uptimeMillis() - t0 < MAX_RUN_MS) {
                 val p = targetParams ?: break
                 val cx = p.x + half
                 val cy = p.y + half
-                val t0 = SystemClock.uptimeMillis()
-                // รอให้ท่าแตะจบก่อนค่อยส่งท่าใหม่ ไม่งั้นระบบจะยกเลิกท่าเก่าทิ้งจนสะดุด
-                awaitTap(cx, cy)
-                val spent = SystemClock.uptimeMillis() - t0
-                delay((ap.clickIntervalMs - spent).coerceAtLeast(5L))
+                if (ap.clickMode == 1) {
+                    // HOLD: นิ้วค้างต่อเนื่อง ต่อ stroke ด้วย willContinue ไม่ให้มีช่วงปล่อยนิ้วระหว่างท่า
+                    holdChain(cx, cy)
+                } else {
+                    // TAP: แตะสั้นรัวซ้ำ รอท่าจบก่อนส่งท่าใหม่
+                    val s = SystemClock.uptimeMillis()
+                    awaitTap(cx, cy)
+                    delay((ap.clickIntervalMs - (SystemClock.uptimeMillis() - s)).coerceAtLeast(5L))
+                }
             }
+            withContext(Dispatchers.Main) { stop() }   // ครบเวลา/จบลูป คืนสถานะปุ่ม
         }
     }
 
@@ -378,11 +388,46 @@ class AutoClickerTarget(
         clickJob?.cancel()
         clickJob = null
         setTouchable(true)
+        (targetView as? TextView)?.text = if (ap.clickMode == 1) "HOLD" else "TAP"
         targetView?.background = GradientDrawable().apply {
             shape = GradientDrawable.OVAL
             setColor(0x88FF1744.toInt())
             setStroke(dp(2), 0xFFFFD600.toInt())
         }
+    }
+
+    /**
+     * กดค้างต่อเนื่อง: ส่ง stroke ยาว 2 วินาทีแบบ willContinue=true แล้วต่อด้วย stroke ถัดไปทันที
+     * ทำให้นิ้วเสมือนไม่ปล่อยระหว่างท่า (API 26+) ถ้าต่ำกว่านั้นจะมีช่วงปล่อยสั้นๆ
+     */
+    private suspend fun holdChain(x: Float, y: Float) {
+        if (Build.VERSION.SDK_INT < 24) return
+        val path = Path().apply { moveTo(x, y); lineTo(x, y) }
+        val chunk = 2000L
+        var prev: GestureDescription.StrokeDescription? = null
+        repeat(5) {                          // 5 x 2s = 10s ต่อรอบ แล้วเริ่มห่วงโซ่ใหม่
+            val stroke = if (Build.VERSION.SDK_INT >= 26) {
+                prev?.continueStroke(path, 0, chunk, it < 4)
+                    ?: GestureDescription.StrokeDescription(path, 0, chunk, true)
+            } else GestureDescription.StrokeDescription(path, 0, chunk)
+            prev = stroke
+            val ok = awaitGesture(GestureDescription.Builder().addStroke(stroke).build(), chunk + 400)
+            if (!ok) return                   // ถูกยกเลิก (เช่น ผู้ใช้แตะจอ) เริ่มห่วงโซ่ใหม่รอบนอก
+        }
+    }
+
+    private suspend fun awaitGesture(desc: GestureDescription, timeoutMs: Long): Boolean {
+        var completed = false
+        withTimeoutOrNull(timeoutMs) {
+            suspendCancellableCoroutine<Unit> { cont ->
+                val ok = service.dispatchGesture(desc, object : AccessibilityService.GestureResultCallback() {
+                    override fun onCompleted(g: GestureDescription?) { completed = true; if (cont.isActive) cont.resume(Unit) {} }
+                    override fun onCancelled(g: GestureDescription?) { if (cont.isActive) cont.resume(Unit) {} }
+                }, null)
+                if (!ok && cont.isActive) cont.resume(Unit) {}
+            }
+        }
+        return completed
     }
 
     /** แตะสั้น 10ms แล้วรอผลจากระบบ (สำเร็จ/ถูกยกเลิก) ค่อยกลับ */

@@ -109,7 +109,18 @@ fun AssistScreen(vm: MainViewModel) {
     }
 
     GlassCard("AUTO-CLICKER (ช่วยกดอัตโนมัติ)", NeonCyan, "จำลองการแตะซ้ำๆ โดยไม่บล็อกการเลื่อนจอหรือกดปุ่มอื่น") {
-        PrefSlider("ความเร็วการคลิก", ap.clickIntervalMs, 40..500, 10, " ms / ครั้ง") { ap.clickIntervalMs = it }
+        var mode by remember { mutableStateOf(ap.clickMode) }
+        Text("โหมด Auto-Click", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Pill("รัวซ้ำ (TAP)", mode == 0) { mode = 0; ap.clickMode = 0 }
+            Pill("กดค้าง (HOLD)", mode == 1) { mode = 1; ap.clickMode = 1 }
+        }
+        Text(
+            if (mode == 1) "HOLD: เหมาะกับปืนกล Full-Auto ในเกมออฟไลน์ นิ้วเสมือนจะค้างที่เป้าจนกว่าจะปิด (หยุดเองใน 10 นาที)"
+            else "TAP: เหมาะกับปืนพก/ลูกซอง/กึ่งอัตโนมัติ แตะรัวตามความเร็วด้านล่าง",
+            color = Color.Gray, fontSize = 11.sp
+        )
+        if (mode == 0) PrefSlider("ความเร็วการคลิก", ap.clickIntervalMs, 40..500, 10, " ms / ครั้ง") { ap.clickIntervalMs = it }
         Text(
             "เป้าหมาย 🎯 สีแดง/เขียว จะปรากฏบนหน้าจอเกมเมื่อเข้าเกม สามารถลากไปวางตรงจุดที่ต้องการกดได้ และเปิด/ปิดได้จากปุ่มลอยใน Toolbox ระหว่างเล่น",
             color = Color.LightGray, fontSize = 12.sp
