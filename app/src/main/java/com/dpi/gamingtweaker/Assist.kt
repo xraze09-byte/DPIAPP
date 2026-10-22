@@ -170,6 +170,13 @@ object GameMode {
 object Assist {
     data class Battery(val pct: Int, val tempC: Float?, val charging: Boolean)
 
+    /** หน้าต่างของระบบที่โผล่ทับเกมชั่วคราว ไม่ใช่การสลับไปแอปอื่นจริง */
+    fun isTransient(ctx: Context, pkg: String): Boolean =
+        pkg == "android" || pkg == "com.android.systemui" || pkg.contains("inputmethod") ||
+            pkg.contains("keyboard") || pkg.contains("permissioncontroller") ||
+            pkg.contains("packageinstaller") || pkg == "com.google.android.gms" ||
+            pkg.startsWith("com.miui.") && pkg.contains("notification") || pkg == ctx.packageName
+
     /** แอปที่ไม่ควรนับเป็นเกม: ตัวเอง, หน้าจอหลัก (launcher), SystemUI, แป้นพิมพ์, ตั้งค่า */
     fun isIgnorable(ctx: Context, pkg: String): Boolean {
         if (pkg == ctx.packageName || pkg == "android" || pkg == "com.android.systemui") return true
@@ -495,7 +502,10 @@ class Toolbox(
 
     @SuppressLint("ClickableViewAccessibility")
     fun show() {
-        if (root != null) return
+        if (root != null) {
+            if (root?.isAttachedToWindow == true) return
+            hide()   // root ค้างแต่ไม่ติดจอ (ระบบถอดออก) ล้างทิ้งแล้วสร้างใหม่
+        }
         val p = Prefs(ctx)
         val (sw, sh) = screen()
         panelW = (minOf(sw, sh) * 0.62f).roundToInt().coerceAtLeast(dp(230))
@@ -628,9 +638,20 @@ class Toolbox(
             true
         }
 
-        wm.addView(r, params)
+        try {
+            wm.addView(r, params)
+        } catch (e: Throwable) {
+            GameDetectorService.lastDecision.value = "สร้างเมนูลอยไม่สำเร็จ: ${e.javaClass.simpleName} ${e.message?.take(80)}"
+            throw e
+        }
         root = r; bubble = b; scroll = sv; panel = content; stats = st; lp = params
         relayout()
+        // ยืนยันว่าหน้าต่างติดอยู่บนจอจริง ไม่ใช่แค่โค้ดวิ่งผ่าน
+        r.post {
+            GameDetectorService.lastDecision.value =
+                if (r.isAttachedToWindow && r.isShown) "เมนูขึ้นบนจอแล้วที่ (${params.x},${params.y}) ขนาด ${r.width}x${r.height}"
+                else "เมนูถูกสร้างแต่ไม่แสดงบนจอ (attached=${r.isAttachedToWindow} shown=${r.isShown})"
+        }
     }
 
     private fun togglePanel(open: Boolean) {
@@ -683,6 +704,9 @@ class Toolbox(
         lastLen = -1
         relayout()
     }
+
+    /** หน้าต่างเมนูยังติดอยู่บนจอจริงไหม */
+    fun isAlive(): Boolean = root?.isAttachedToWindow == true
 
     fun hide() {
         root?.let { runCatching { wm.removeView(it) } }
@@ -765,6 +789,11 @@ class GameDetectorService : AccessibilityService() {
         // โหมดทุกแอป: แอปใดก็ได้ที่ไม่ใช่ตัวเอง/launcher/SystemUI นับเป็นเกม
         fun isGame(p: String) = p in games || (prefs.allApps && !Assist.isIgnorable(this, p))
         val seen = pkg ?: lastEventPkg
+        // หน้าต่างชั่วคราวของระบบ (แจ้งเตือน, แผงลัด, คีย์บอร์ด, ตัวเลือกแชร์) ไม่ถือว่าออกจากเกม
+        if (seen != null && ap.sessionActive && !isGame(seen) && Assist.isTransient(this, seen)) {
+            lastDecision.value = "เห็นหน้าต่างระบบ $seen ชั่วคราว ไม่นับว่าออกจากเกม"
+            return
+        }
         // ถ้า dumpsys ใช้ไม่ได้ (Shizuku ยังไม่พร้อม) ใช้แพ็กเกจจากอีเวนต์แทน เมนูจะได้ขึ้นอยู่ดี
         val game: String? = when {
             resumed.isNotEmpty() -> resumed.firstOrNull { isGame(it) }
@@ -814,6 +843,14 @@ class GameDetectorService : AccessibilityService() {
             inGame && ap.enabled && ap.sessionActive && !userClosed && sessionJob?.isActive != true ->
                 startSession(game, forceToolbox = false)
             !inGame && ap.sessionActive -> {
+                delay(1200)
+                val again = runCatching { Tweaks.resumedPackages() }.getOrDefault(emptySet())
+                val stillGame = again.any { isGame(it) } ||
+                    (again.isEmpty() && lastEventPkg?.let { isGame(it) } == true)
+                if (stillGame) {
+                    lastDecision.value = "ยังอยู่ในเกม (ยืนยันซ้ำ) เก็บเมนูไว้"
+                    return
+                }
                 stopSession()
                 runCatching { GameMode.exit(ap) }
                 ap.sessionActive = false
@@ -832,7 +869,7 @@ class GameDetectorService : AccessibilityService() {
         uiScope.launch {
             if (sessionJob?.isActive == true) {
                 if (forceToolbox) {
-                    runCatching { toolbox.show() }
+                    runCatching { toolbox.show() }.onFailure { lastDecision.value = "เปิดเมนูล้มเหลว: ${it.javaClass.simpleName} ${it.message?.take(80)}" }
                     runCatching { autoClicker.show() }
                 }
                 return@launch
@@ -852,7 +889,7 @@ class GameDetectorService : AccessibilityService() {
 
     private suspend fun runSession(game: String?, forceToolbox: Boolean) = coroutineScope {
         if (ap.toolbox || forceToolbox) {
-            runCatching { toolbox.show() }
+            runCatching { toolbox.show() }.onFailure { lastDecision.value = "เปิดเมนูล้มเหลว: ${it.javaClass.simpleName} ${it.message?.take(80)}" }
             runCatching { autoClicker.show() }
         }
         val ctx = this@GameDetectorService
@@ -940,6 +977,10 @@ class GameDetectorService : AccessibilityService() {
                 val statsText = "เวลาเล่น ${Assist.fmt(elapsed)}\n" +
                     "FPS $fpsS  |  Ping $pingS (เฉลี่ย ${avgPing}ms)\n" +
                     "แบต $batS${if (bat.charging) " (ชาร์จ)" else ""}  |  $tempS"
+                if (ap.toolbox && !userClosed && tb?.isAlive() != true) {
+                    runCatching { toolbox.show() }
+                        .onFailure { lastDecision.value = "สร้างเมนูใหม่ไม่สำเร็จ: ${it.javaClass.simpleName} ${it.message?.take(80)}" }
+                }
                 tb?.update(bubbleText, statsText, hot || low || lag)
                 delay(1000)
             }
