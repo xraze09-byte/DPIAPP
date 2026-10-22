@@ -366,7 +366,7 @@ fun DpiApp(vm: MainViewModel, onRequestShizuku: () -> Unit) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) { vm.telemetryLoop() }
     }
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val tabs = listOf("หน้าหลัก", "ผู้ช่วย", "มาโคร")
+    val tabs = listOf("หน้าหลัก", "ผู้ช่วย", "มาโคร", "แล็บ")
 
     Scaffold(
         containerColor = BgDark,
@@ -401,7 +401,8 @@ fun DpiApp(vm: MainViewModel, onRequestShizuku: () -> Unit) {
                         AutoApplyCard(vm)
                     }
                     1 -> AssistScreen(vm)
-                    else -> MacroScreen(vm)
+                    2 -> MacroScreen(vm)
+                    else -> LabScreen(vm)
                 }
                 Spacer(Modifier.height(8.dp))
             }
@@ -460,7 +461,7 @@ private fun tempColor(t: Float?) = when {
     t == null -> Color.White; t < 40f -> NeonGreen; t < 48f -> NeonYellow; else -> NeonRed
 }
 
-private fun pingColor(p: Int?) = when {
+internal fun pingColor(p: Int?) = when {
     p == null -> Color.White; p < 60 -> NeonGreen; p < 120 -> NeonYellow; else -> NeonRed
 }
 

@@ -108,7 +108,7 @@ fun AssistScreen(vm: MainViewModel) {
         PrefToggle("เคลียร์แรมตอนเข้าเกม", "ปิดแอปพื้นหลังที่ไม่จำเป็นอัตโนมัติ", ap.boostOnStart) { ap.boostOnStart = it }
     }
 
-    GlassCard("AUTO-CLICKER (ช่วยกดอัตโนมัติ)", NeonCyan, "จำลองการแตะซ้ำๆ โดยไม่บล็อกการเลื่อนจอหรือกดปุ่มอื่น") {
+    GlassCard("AUTO-CLICKER (ใช้ได้ทุกแอป)", NeonCyan, "แตะซ้ำจุดเดียว • ระหว่างทำงานอาจขัดจังหวะการสัมผัสของคุณ • หยุดเองใน 10 นาที") {
         var mode by remember { mutableStateOf(ap.clickMode) }
         Text("โหมด Auto-Click", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -122,20 +122,21 @@ fun AssistScreen(vm: MainViewModel) {
         )
         if (mode == 0) PrefSlider("ความเร็วการคลิก", ap.clickIntervalMs, 40..500, 10, " ms / ครั้ง") { ap.clickIntervalMs = it }
         Text(
-            "เป้าหมาย 🎯 สีแดง/เขียว จะปรากฏบนหน้าจอเกมเมื่อเข้าเกม สามารถลากไปวางตรงจุดที่ต้องการกดได้ และเปิด/ปิดได้จากปุ่มลอยใน Toolbox ระหว่างเล่น",
+            "เปิดแผงแล้วสลับไปแอปไหนก็ได้ ลากวงกลม TAP/HOLD ไปวางบนจุดที่ต้องการกด แล้วกด ▶ เริ่ม " +
+                "เปิดจากปุ่ม \"Auto-Click\" ในแผงตั้งค่าด่วนได้ด้วย (ดึงแถบแจ้งเตือนลง กดดินสอเพื่อเพิ่มปุ่ม)",
             color = Color.LightGray, fontSize = 12.sp
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {
                     val s = GameDetectorService.instance
-                    if (s == null) Toast.makeText(ctx, "ต้องเปิด Auto-Apply Service ก่อน", Toast.LENGTH_LONG).show()
-                    else s.startSession(forceToolbox = true)
+                    if (s == null) Toast.makeText(ctx, "ต้องเปิดบริการ Accessibility ก่อน", Toast.LENGTH_LONG).show()
+                    else s.showClickPanel()
                 },
                 modifier = Modifier.weight(1f)
-            ) { Text("แสดงเป้าหมาย 🎯 ทดสอบ") }
-            OutlinedButton(onClick = { GameDetectorService.instance?.stopSession() }, modifier = Modifier.weight(1f)) {
-                Text("ซ่อนเป้าหมาย")
+            ) { Text("เปิดแผง Auto-Click") }
+            OutlinedButton(onClick = { GameDetectorService.instance?.hideClickPanel() }, modifier = Modifier.weight(1f)) {
+                Text("ปิดแผง")
             }
         }
     }
