@@ -108,22 +108,35 @@ fun AssistScreen(vm: MainViewModel) {
         PrefToggle("เคลียร์แรมตอนเข้าเกม", "ปิดแอปพื้นหลังที่ไม่จำเป็นอัตโนมัติ", ap.boostOnStart) { ap.boostOnStart = it }
     }
 
-    GlassCard("AUTO-CLICKER (ใช้ได้ทุกแอป)", NeonCyan, "แตะซ้ำจุดเดียว • ระหว่างทำงานอาจขัดจังหวะการสัมผัสของคุณ • หยุดเองใน 10 นาที") {
+    GlassCard("AUTO-CLICKER (ใช้ได้ทุกแอป)", NeonCyan, "หลายเป้าหมาย + ทริกเกอร์ • ระหว่างทำงานอาจขัดจังหวะการสัมผัสของคุณ • หยุดเองใน 10 นาที") {
         var mode by remember { mutableStateOf(ap.clickMode) }
-        Text("โหมด Auto-Click", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text("รูปแบบการกด", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Pill("รัวซ้ำ (TAP)", mode == 0) { mode = 0; ap.clickMode = 0 }
-            Pill("กดค้าง (HOLD)", mode == 1) { mode = 1; ap.clickMode = 1 }
+            Pill("Single Tap", mode == 0) { mode = 0; ap.clickMode = 0 }
+            Pill("Double Tap", mode == 2) { mode = 2; ap.clickMode = 2 }
+            Pill("Hold", mode == 1) { mode = 1; ap.clickMode = 1 }
         }
         Text(
-            if (mode == 1) "HOLD: เหมาะกับปืนกล Full-Auto ในเกมออฟไลน์ นิ้วเสมือนจะค้างที่เป้าจนกว่าจะปิด (หยุดเองใน 10 นาที)"
-            else "TAP: เหมาะกับปืนพก/ลูกซอง/กึ่งอัตโนมัติ แตะรัวตามความเร็วด้านล่าง",
+            when (mode) {
+                1 -> "Hold: กดค้างต่อเนื่องทุกเป้า เหมาะกับปืนกล Full-Auto ในเกมออฟไลน์ (หยุดเองใน 10 นาที)"
+                2 -> "Double Tap: กดเบิ้ล 2 ครั้งติดกันทุกรอบ"
+                else -> "Single Tap: กดแล้วปล่อยทันที ตามระยะห่างด้านล่าง"
+            },
             color = Color.Gray, fontSize = 11.sp
         )
-        if (mode == 0) PrefSlider("ความเร็วการคลิก", ap.clickIntervalMs, 40..500, 10, " ms / ครั้ง") { ap.clickIntervalMs = it }
+        if (mode != 1) {
+            PrefSlider("Tap Interval (ระยะห่างแต่ละครั้ง)", ap.clickIntervalMs, 10..1000, 10, " ms") { ap.clickIntervalMs = it }
+            PrefSlider("Tap Duration (นิ้วค้างต่อครั้ง)", ap.tapDurationMs, 1..500, 5, " ms") { ap.tapDurationMs = it }
+        }
+        Text("ทริกเกอร์", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        PrefToggle("แตะสลับเริ่ม/หยุด", "ปิด = กดค้างที่ปุ่ม FIRE เพื่อยิง ปล่อยแล้วหยุด", ap.triggerToggle) { ap.triggerToggle = it }
+        PrefSlider("Triggers Sensitivity (ขนาดพื้นที่รับทริกเกอร์)", ap.triggerSize, 36..120, 4, " dp") { ap.triggerSize = it }
+        PrefSlider("Trigger Delay (กดค้างก่อนเริ่ม)", ap.triggerHoldMs, 0..1500, 50, " ms", offAtZero = true) { ap.triggerHoldMs = it }
+        PrefToggle("Hide Sensitivity Triggers", "ซ่อนกรอบทริกเกอร์/เป้า ยังทำงานตามปกติ", ap.triggerHidden) { ap.triggerHidden = it }
+        PrefToggle("Accidental Touch Protection", "ต้องกดค้างอย่างน้อย 250 ms และล็อกตำแหน่งเป้าไว้กันลากพลาด", ap.accidentalGuard) { ap.accidentalGuard = it }
         Text(
-            "เปิดแผงแล้วสลับไปแอปไหนก็ได้ ลากวงกลม TAP/HOLD ไปวางบนจุดที่ต้องการกด แล้วกด ▶ เริ่ม " +
-                "เปิดจากปุ่ม \"Auto-Click\" ในแผงตั้งค่าด่วนได้ด้วย (ดึงแถบแจ้งเตือนลง กดดินสอเพื่อเพิ่มปุ่ม)",
+            "เปิดแผงแล้วสลับไปแอปไหนก็ได้ กด 🔓 เพื่อลากเป้า/ทริกเกอร์ไปวาง กด ＋ เพื่อเพิ่ม Target 1, 2, 3… แล้วกด 🔒 ล็อก " +
+                "ปุ่ม ⚙ บนแผงเปิดหน้าตั้งค่าทั้งหมด (ลบเป้าได้ที่นั่น) เปิดจากปุ่ม \"Auto-Click\" ในแผงตั้งค่าด่วนได้ด้วย",
             color = Color.LightGray, fontSize = 12.sp
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

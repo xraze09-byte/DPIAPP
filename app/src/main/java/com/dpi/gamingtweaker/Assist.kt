@@ -98,7 +98,17 @@ class AssistPrefs(ctx: Context) {
     var breakMin by IntPref(sp, "break_min", 60)
     var batteryAlert by IntPref(sp, "battery_alert", 15)
     var clickIntervalMs by IntPref(sp, "click_interval", 60)
+    /** 0 = Single Tap, 1 = Continuous Hold (เดิม), 2 = Double Tap */
     var clickMode by IntPref(sp, "click_mode", 0)
+    var tapDurationMs by IntPref(sp, "tap_duration", 20)
+    var triggerHoldMs by IntPref(sp, "trigger_hold", 0)          // กดค้างที่ปุ่มทริกเกอร์นานเท่านี้ก่อนเริ่ม (0 = ทันที)
+    var triggerSize by IntPref(sp, "trigger_size", 64)           // ความไว = ขนาดพื้นที่รับทริกเกอร์ (dp)
+    var triggerToggle by BoolPref(sp, "trigger_toggle", false)   // false = กดค้างเพื่อยิง, true = แตะเพื่อเริ่ม/หยุด
+    var triggerHidden by BoolPref(sp, "trigger_hidden", false)   // ซ่อนกรอบทริกเกอร์/เป้า (ยังทำงานอยู่)
+    var accidentalGuard by BoolPref(sp, "accidental_guard", true) // กันแตะพลาด: ล็อกตำแหน่ง + ต้องกดค้างถึงเวลา
+    var targetsJson by StrPref(sp, "targets_json")
+    var trigX by IntPref(sp, "trig_x", 40)
+    var trigY by IntPref(sp, "trig_y", 600)
     var panelX by IntPref(sp, "panel_x", 24)
     var panelY by IntPref(sp, "panel_y", 120)   // 0 = TAP รัวซ้ำ, 1 = HOLD กดค้าง
     var startMacroId by StrPref(sp, "start_macro")
@@ -238,7 +248,7 @@ object Assist {
         appendLine("Overlay permission (ไม่จำเป็นสำหรับเมนู Accessibility): ${Settings.canDrawOverlays(ctx)}")
         appendLine("Accessibility: ${isA11yEnabled(ctx)} | service live: ${GameDetectorService.instance != null}")
         val ap = AssistPrefs(ctx)
-        appendLine("Assist: enabled=${ap.enabled} session=${ap.sessionActive} gameMode=${ap.restoreCmd != null} clickMode=${if (ap.clickMode == 1) "HOLD" else "TAP"} panel=${GameDetectorService.instance?.clickPanelShown}")
+        appendLine("Assist: enabled=${ap.enabled} session=${ap.sessionActive} gameMode=${ap.restoreCmd != null} clickMode=${ap.clickModeLabel()} targets=${ap.targets().size} panel=${GameDetectorService.instance?.clickPanelShown}")
         if (mode == Shell.Mode.NONE) {
             appendLine("ข้ามการทดสอบ shell (ไม่มี Shizuku/Root)")
             return@buildString
@@ -262,305 +272,6 @@ object Assist {
     }
 }
 
-// ============================ AUTO CLICKER TARGET ============================
-class AutoClickerTarget(
-    private val ctx: Context,
-    private val wm: WindowManager,
-    private val ap: AssistPrefs,
-    private val service: AccessibilityService,
-) {
-    private val unit = DisplayMetrics.DENSITY_DEVICE_STABLE / 160f
-    private fun dp(v: Int) = (v * unit).roundToInt()
-
-    private var targetView: View? = null
-    private var targetParams: WindowManager.LayoutParams? = null
-    var isRunning = false
-        private set
-    private var clickJob: Job? = null
-    private val MAX_RUN_MS = 10 * 60_000L   // หยุดเองเมื่อครบ 10 นาที
-
-    val shown: Boolean get() = targetView != null
-
-    @SuppressLint("ClickableViewAccessibility")
-    fun show() {
-        if (targetView != null) return
-        val sz = dp(52)
-        val view = TextView(ctx).apply {
-            text = if (ap.clickMode == 1) "HOLD" else "TAP"
-            setTextColor(0xFFFFFFFF.toInt())
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setTextSize(TypedValue.COMPLEX_UNIT_PX, 12f * unit)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0x88FF1744.toInt())
-                setStroke(dp(2), 0xFFFFD600.toInt())
-            }
-        }
-        val params = WindowManager.LayoutParams(
-            sz, sz,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = ap.clickX
-            y = ap.clickY
-            if (Build.VERSION.SDK_INT >= 28)
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-
-        var sx = 0; var sy = 0; var tx = 0f; var ty = 0f
-        view.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { sx = params.x; sy = params.y; tx = e.rawX; ty = e.rawY }
-                MotionEvent.ACTION_MOVE -> {
-                    params.x = sx + (e.rawX - tx).toInt()
-                    params.y = sy + (e.rawY - ty).toInt()
-                    runCatching { wm.updateViewLayout(view, params) }
-                    ap.clickX = params.x
-                    ap.clickY = params.y
-                }
-            }
-            true
-        }
-
-        try {
-            wm.addView(view, params)
-        } catch (e: Throwable) {
-            GameDetectorService.lastDecision.value = "สร้างเป้า Auto-Click ไม่สำเร็จ: ${e.javaClass.simpleName} ${e.message?.take(80)}"
-            return
-        }
-        targetView = view
-        targetParams = params
-    }
-
-    /** ตอนรันให้เป้าไม่รับทัช เพื่อไม่ให้ดักนิ้วที่กำลังเล่นเกม ตอนหยุดค่อยให้ลากได้ */
-    private fun setTouchable(touchable: Boolean) {
-        val v = targetView ?: return
-        val p = targetParams ?: return
-        p.flags = if (touchable) {
-            p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
-        } else {
-            p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-        runCatching { wm.updateViewLayout(v, p) }
-    }
-
-    fun hide() {
-        stop()
-        targetView?.let { runCatching { wm.removeView(it) } }
-        targetView = null
-        targetParams = null
-    }
-
-    fun toggle(scope: CoroutineScope): Boolean {
-        if (isRunning) stop() else start(scope)
-        return isRunning
-    }
-
-    fun start(scope: CoroutineScope) {
-        if (isRunning) return
-        isRunning = true
-        targetView?.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(0x8800E676.toInt())
-            setStroke(dp(3), 0xFFFFFFFF.toInt())
-        }
-        setTouchable(false)
-        clickJob = scope.launch(Dispatchers.Default) {
-            val half = dp(52) / 2f
-            val t0 = SystemClock.uptimeMillis()
-            while (isActive && SystemClock.uptimeMillis() - t0 < MAX_RUN_MS) {
-                val p = targetParams ?: break
-                val cx = p.x + half
-                val cy = p.y + half
-                if (ap.clickMode == 1) {
-                    // HOLD: นิ้วค้างต่อเนื่อง ต่อ stroke ด้วย willContinue ไม่ให้มีช่วงปล่อยนิ้วระหว่างท่า
-                    holdChain(cx, cy)
-                } else {
-                    // TAP: แตะสั้นรัวซ้ำ รอท่าจบก่อนส่งท่าใหม่
-                    val s = SystemClock.uptimeMillis()
-                    awaitTap(cx, cy)
-                    delay((ap.clickIntervalMs - (SystemClock.uptimeMillis() - s)).coerceAtLeast(5L))
-                }
-            }
-            withContext(Dispatchers.Main) { stop() }   // ครบเวลา/จบลูป คืนสถานะปุ่ม
-        }
-    }
-
-    fun stop() {
-        isRunning = false
-        clickJob?.cancel()
-        clickJob = null
-        setTouchable(true)
-        (targetView as? TextView)?.text = if (ap.clickMode == 1) "HOLD" else "TAP"
-        targetView?.background = GradientDrawable().apply {
-            shape = GradientDrawable.OVAL
-            setColor(0x88FF1744.toInt())
-            setStroke(dp(2), 0xFFFFD600.toInt())
-        }
-    }
-
-    /**
-     * กดค้างต่อเนื่อง: ส่ง stroke ยาว 2 วินาทีแบบ willContinue=true แล้วต่อด้วย stroke ถัดไปทันที
-     * ทำให้นิ้วเสมือนไม่ปล่อยระหว่างท่า (API 26+) ถ้าต่ำกว่านั้นจะมีช่วงปล่อยสั้นๆ
-     */
-    private suspend fun holdChain(x: Float, y: Float) {
-        if (Build.VERSION.SDK_INT < 24) return
-        val path = Path().apply { moveTo(x, y); lineTo(x, y) }
-        val chunk = 2000L
-        var prev: GestureDescription.StrokeDescription? = null
-        repeat(5) {                          // 5 x 2s = 10s ต่อรอบ แล้วเริ่มห่วงโซ่ใหม่
-            val stroke = if (Build.VERSION.SDK_INT >= 26) {
-                prev?.continueStroke(path, 0, chunk, it < 4)
-                    ?: GestureDescription.StrokeDescription(path, 0, chunk, true)
-            } else GestureDescription.StrokeDescription(path, 0, chunk)
-            prev = stroke
-            val ok = awaitGesture(GestureDescription.Builder().addStroke(stroke).build(), chunk + 400)
-            if (!ok) return                   // ถูกยกเลิก (เช่น ผู้ใช้แตะจอ) เริ่มห่วงโซ่ใหม่รอบนอก
-        }
-    }
-
-    private suspend fun awaitGesture(desc: GestureDescription, timeoutMs: Long): Boolean {
-        val completed = java.util.concurrent.atomic.AtomicBoolean(false)
-        withTimeoutOrNull(timeoutMs) {
-            suspendCancellableCoroutine<Unit> { cont ->
-                val ok = service.dispatchGesture(desc, object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(g: GestureDescription?) { completed.set(true); if (cont.isActive) cont.resume(Unit) {} }
-                    override fun onCancelled(g: GestureDescription?) { if (cont.isActive) cont.resume(Unit) {} }
-                }, null)
-                if (!ok && cont.isActive) cont.resume(Unit) {}
-            }
-        }
-        return completed.get()
-    }
-
-    /** แตะสั้น 10ms แล้วรอผลจากระบบ (สำเร็จ/ถูกยกเลิก) ค่อยกลับ */
-    private suspend fun awaitTap(x: Float, y: Float) {
-        if (Build.VERSION.SDK_INT < 24) return
-        val path = Path().apply { moveTo(x, y); lineTo(x, y) }
-        val desc = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 10))
-            .build()
-        withTimeoutOrNull(300L) {
-            suspendCancellableCoroutine<Unit> { cont ->
-                val ok = service.dispatchGesture(desc, object : AccessibilityService.GestureResultCallback() {
-                    override fun onCompleted(g: GestureDescription?) { if (cont.isActive) cont.resume(Unit) {} }
-                    override fun onCancelled(g: GestureDescription?) { if (cont.isActive) cont.resume(Unit) {} }
-                }, null)
-                if (!ok && cont.isActive) cont.resume(Unit) {}
-            }
-        }
-    }
-}
-
-
-// ============================ AUTO-CLICK PANEL (ทุกแอป) ============================
-/**
- * แผงควบคุม Auto-Click ลอยของตัวเอง ไม่ผูกกับการตรวจเกม จึงใช้ได้กับทุกแอป
- * ประกอบด้วยเป้า (ลากไปวาง) + แถบเล็กมีปุ่ม เริ่ม/หยุด, สลับ TAP/HOLD, ปิด
- */
-class AutoClickPanel(
-    private val ctx: Context,
-    private val wm: WindowManager,
-    private val ap: AssistPrefs,
-    private val clicker: AutoClickerTarget,
-    private val scope: CoroutineScope,
-) {
-    private val unit = DisplayMetrics.DENSITY_DEVICE_STABLE / 160f
-    private fun dp(v: Int) = (v * unit).roundToInt()
-    private var bar: View? = null
-    private var barParams: WindowManager.LayoutParams? = null
-    private var startBtn: TextView? = null
-    private var modeBtn: TextView? = null
-
-    val shown: Boolean get() = bar?.isAttachedToWindow == true
-
-    private fun chip(text: String, color: Int, onClick: (TextView) -> Unit) = TextView(ctx).apply {
-        this.text = text
-        setTextColor(0xFFFFFFFF.toInt())
-        typeface = android.graphics.Typeface.DEFAULT_BOLD
-        setTextSize(TypedValue.COMPLEX_UNIT_PX, 12f * unit)
-        gravity = Gravity.CENTER
-        setPadding(dp(12), dp(8), dp(12), dp(8))
-        background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(color) }
-        setOnClickListener { onClick(this) }
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    fun show() {
-        if (shown) return
-        bar?.let { runCatching { wm.removeView(it) } }
-        clicker.show()   // เป้า
-
-        val go = chip(if (clicker.isRunning) "■ หยุด" else "▶ เริ่ม", 0xFF00A152.toInt()) { v ->
-            val run = clicker.toggle(scope)
-            v.text = if (run) "■ หยุด" else "▶ เริ่ม"
-            (v.background as GradientDrawable).setColor(if (run) 0xFFD50000.toInt() else 0xFF00A152.toInt())
-        }
-        val mode = chip(if (ap.clickMode == 1) "HOLD" else "TAP", 0xFF4527A0.toInt()) { v ->
-            ap.clickMode = if (ap.clickMode == 1) 0 else 1
-            v.text = if (ap.clickMode == 1) "HOLD" else "TAP"
-            if (!clicker.isRunning) clicker.stop()   // รีเฟรชป้ายบนเป้า
-        }
-        val close = chip("✕", 0xFF455A64.toInt()) { hide() }
-        startBtn = go; modeBtn = mode
-
-        val row = LinearLayout(ctx).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(6), dp(6), dp(6), dp(6))
-            background = GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(0xE6101020.toInt()) }
-            addView(go); addView(Space(ctx).apply { minimumWidth = dp(6) })
-            addView(mode); addView(Space(ctx).apply { minimumWidth = dp(6) })
-            addView(close)
-        }
-        val p = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = ap.panelX; y = ap.panelY
-            if (Build.VERSION.SDK_INT >= 28)
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-        }
-        // ลากแผงด้วยพื้นที่ว่างของแถบ (ปุ่มรับคลิกเอง)
-        var sx = 0; var sy = 0; var tx = 0f; var ty = 0f; var moved = false
-        row.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { sx = p.x; sy = p.y; tx = e.rawX; ty = e.rawY; moved = false }
-                MotionEvent.ACTION_MOVE -> {
-                    if (abs(e.rawX - tx) > dp(6) || abs(e.rawY - ty) > dp(6)) moved = true
-                    if (moved) { p.x = sx + (e.rawX - tx).toInt(); p.y = sy + (e.rawY - ty).toInt(); runCatching { wm.updateViewLayout(row, p) } }
-                }
-                MotionEvent.ACTION_UP -> if (moved) { ap.panelX = p.x; ap.panelY = p.y }
-            }
-            true
-        }
-        try {
-            wm.addView(row, p)
-            bar = row; barParams = p
-            GameDetectorService.lastDecision.value = "แผง Auto-Click ขึ้นแล้ว (ใช้ได้ทุกแอป)"
-        } catch (e: Throwable) {
-            GameDetectorService.lastDecision.value = "สร้างแผง Auto-Click ไม่สำเร็จ: ${e.javaClass.simpleName} ${e.message?.take(80)}"
-            clicker.hide()
-        }
-    }
-
-    fun hide() {
-        clicker.hide()
-        bar?.let { runCatching { wm.removeView(it) } }
-        bar = null; barParams = null; startBtn = null; modeBtn = null
-    }
-
-    fun toggleShown() { if (shown) hide() else show() }
-}
-
 // ============================ FLOATING TOOLBOX ============================
 private val TB_NORMAL = 0xCC111122.toInt()
 private val TB_WARN = 0xDDD50000.toInt()
@@ -580,6 +291,7 @@ class Toolbox(
     private val scope: CoroutineScope,
     private val ap: AssistPrefs,
     private val autoClicker: AutoClickerTarget,
+    private val onClickSettings: () -> Unit,
     private val onClose: () -> Unit,
 ) {
     private val unit = DisplayMetrics.DENSITY_DEVICE_STABLE / 160f
@@ -692,7 +404,13 @@ class Toolbox(
             }
         }
         clickBtn = cb
-        content.addRow(cb)
+        val gearBtn = label("⚙ ตั้งค่า", 13f).apply {
+            background = rounded(C_PURPLE, 12)
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(10), dp(8), dp(10))
+            setOnClickListener { onClickSettings() }
+        }
+        content.addRow(row(cb, gearBtn))
 
         content.addRow(row(
             button("DPI เกม ${p.gameDpi}", C_ORANGE) {
@@ -899,6 +617,8 @@ class GameDetectorService : AccessibilityService() {
     }
     /** เปิด/ปิดแผง Auto-Click ใช้ได้ทุกแอป ไม่ขึ้นกับการตรวจเกม */
     fun toggleClickPanel() { uiScope.launch { runCatching { clickPanel.toggleShown() } } }
+    /** เปิด/ปิดหน้าต่างตั้งค่า Auto-Click (ใช้ร่วมกับปุ่ม ⚙ ในแผง Toolbox) */
+    fun toggleClickSettings() { uiScope.launch { runCatching { clickPanel.toggleSettings() } } }
     fun showClickPanel() { uiScope.launch { runCatching { clickPanel.show() } } }
     fun hideClickPanel() { uiScope.launch { runCatching { clickPanel.hide() } } }
     val clickPanelShown: Boolean get() = ::ap.isInitialized && clickPanel.shown
@@ -907,7 +627,7 @@ class GameDetectorService : AccessibilityService() {
 
     private var tb: Toolbox? = null
     private val toolbox: Toolbox
-        get() = tb ?: Toolbox(this, getSystemService(WINDOW_SERVICE) as WindowManager, uiScope, ap, autoClicker) {
+        get() = tb ?: Toolbox(this, getSystemService(WINDOW_SERVICE) as WindowManager, uiScope, ap, autoClicker, { toggleClickSettings() }) {
             userClosed = true
             stopSession()
         }.also { tb = it }
@@ -1049,7 +769,8 @@ class GameDetectorService : AccessibilityService() {
             sessionJob?.cancel()
             sessionJob = null
             tb?.hide()
-            autoClicker.hide()
+            runCatching { clickPanel.hideSettings() }
+            if (!clickPanel.shown) autoClicker.hide()   // ถ้าเปิดแผงเองอยู่ ไม่ปิดเป้าทิ้ง
         }
     }
 
@@ -1152,7 +873,8 @@ class GameDetectorService : AccessibilityService() {
             }
         } finally {
             tb?.hide()
-            autoClicker.hide()
+            runCatching { clickPanel.hideSettings() }
+            if (!clickPanel.shown) autoClicker.hide()
             val dur = SystemClock.elapsedRealtime() - t0
             if (game != null && dur >= 60_000) {
                 ap.addHistory(
